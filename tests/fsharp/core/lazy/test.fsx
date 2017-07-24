@@ -1,28 +1,23 @@
 // #Conformance #Regression 
-#if Portable 
+#if TESTS_AS_APP
 module Core_lazy
 #endif
 
-let failures = ref false
-let report_failure () = 
-  stderr.WriteLine " NO"; failures := true
-let test s b = stderr.Write(s:string);  if b then stderr.WriteLine " OK" else report_failure() 
+let failures = ref []
+
+let report_failure (s : string) = 
+    stderr.Write" NO: "
+    stderr.WriteLine s
+    failures := !failures @ [s]
+
+let test (s : string) b = 
+    stderr.Write(s)
+    if b then stderr.WriteLine " OK"
+    else report_failure (s)
+
+let check s b1 b2 = test s (b1 = b2)
 
 
-
-#if NetCore
-#else
-let argv = System.Environment.GetCommandLineArgs() 
-let SetCulture() = 
-  if argv.Length > 2 && argv.[1] = "--culture" then  begin
-    let cultureString = argv.[2] in 
-    let culture = new System.Globalization.CultureInfo(cultureString) in 
-    stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-    System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
-  end 
-  
-do SetCulture()    
-#endif
 
 (* TEST SUITE FOR STANDARD LIBRARY *)
 
@@ -48,8 +43,7 @@ do test "fedeoin" (let x = 3 in Lazy.force (Lazy.force (lazy (lazy (x+x)))) = 6)
 do test "fedeoin" (let x = ref 3 in let y = lazy (x := !x + 1; 6) in ignore (Lazy.force y); ignore (Lazy.force y); !x = 4)
 do test "fedeoin" (let x = ref 3 in let y = lazy (x := !x + 1; "abc") in ignore (Lazy.force y); ignore (Lazy.force y); !x = 4)
 
-#if Portable
-#else
+#if !FX_PORTABLE_OR_NETSTANDARD
 module Bug5770 =
     open System.Threading
     do
@@ -77,9 +71,17 @@ let x1 : System.IObservable<int> = null
 let x2 : System.IObserver<int> = null
 let x3 : System.Lazy<int> = null
 
+#if TESTS_AS_APP
+let RUN() = !failures
+#else
 let aa =
-  if !failures then (stdout.WriteLine "Test Failed"; exit 1) 
+  match !failures with 
+  | [] -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
+#endif
 
-do (stdout.WriteLine "Test Passed"; 
-    System.IO.File.WriteAllText("test.ok","ok"); 
-    exit 0)

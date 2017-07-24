@@ -16,6 +16,7 @@ open Salsa
 
 open Microsoft.Win32
 
+open Microsoft.VisualStudio
 open Microsoft.VisualStudio.FSharp.ProjectSystem
 open Microsoft.VisualStudio.Shell.Interop
 
@@ -144,8 +145,12 @@ type TheTests() =
             MSBuildProject.SetGlobalProperty(project.BuildProject, "UTF8Output", forceUTF8)
             project
         with 
-        | e -> project.Close() |> ignore
-               reraise()
+        | e ->
+            try
+                project.Close() |> ignore
+            with closeExc ->
+                raise <| AggregateException("An exception occurred during cleanup after a project creation failure", [e; closeExc])
+            reraise()
 
     static member internal CreateProject(filename : string) =
         let sp, configChangeNotifier = VsMocks.MakeMockServiceProviderAndConfigChangeNotifier()
@@ -724,8 +729,6 @@ module LanguageServiceExtension =
             member ops.CompleteAtCursorForReason (file,reason) = msbuild.CompleteAtCursorForReason (file,reason) 
             member ops.CompletionBestMatchAtCursorFor (file, value, filterText) = msbuild.CompletionBestMatchAtCursorFor (file, value, filterText) 
             member ops.GotoDefinitionAtCursor (file, forceGen) = msbuild.GotoDefinitionAtCursor (file, forceGen) 
-            member ops.GetNavigationContentAtCursor file = msbuild.GetNavigationContentAtCursor file 
-            member ops.GetHiddenRegionCommands file = msbuild.GetHiddenRegionCommands file 
             member ops.GetIdentifierAtCursor file = msbuild.GetIdentifierAtCursor file 
             member ops.GetF1KeywordAtCursor file = msbuild.GetF1KeywordAtCursor file 
             member ops.GetLineNumber (file, n) = msbuild.GetLineNumber (file, n) 

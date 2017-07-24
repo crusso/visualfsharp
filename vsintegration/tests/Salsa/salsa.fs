@@ -221,7 +221,8 @@ module internal Salsa =
 
             try        
                 try 
-                    GetFlagsAndSources(project,host)
+                    let flagsAndSources = GetFlagsAndSources(project,host)
+                    (project, flagsAndSources)
                 with e -> 
                     System.Diagnostics.Debug.Assert(false, sprintf "Bug seen in MSBuild CrackProject: %s %s %s\n" (e.GetType().Name) e.Message (e.StackTrace))
                     reraise()
@@ -257,7 +258,8 @@ module internal Salsa =
                 timestamp <- newtimestamp
                 prevConfig <- curConfig
                 prevPlatform <- curPlatform
-                flags <- Some(MSBuild.CrackProject(projectfile, prevConfig, prevPlatform))
+                let projectObj, projectObjFlags = MSBuild.CrackProject(projectfile, prevConfig, prevPlatform)
+                flags <- Some(projectObjFlags)
             match flags with
             | Some flags -> flags
             | _ -> raise Error.Bug
@@ -287,10 +289,16 @@ module internal Salsa =
           member this.ErrorListTaskReporter() = None
           member this.AdviseProjectSiteChanges(callbackOwnerKey,callback) = changeHandlers.[callbackOwnerKey] <- callback
           member this.AdviseProjectSiteCleaned(callbackOwnerKey,callback) = () // no unit testing support here
+          member this.AdviseProjectSiteClosed(callbackOwnerKey,callback) = () // no unit testing support here
           member this.IsIncompleteTypeCheckEnvironment = false
           member this.TargetFrameworkMoniker = ""
           member this.LoadTime = System.DateTime(2000,1,1)
-        
+          member this.ProjectGuid = 
+                let projectObj, projectObjFlags = MSBuild.CrackProject(projectfile, configurationFunc(), platformFunc())
+                projectObj.GetProperty(ProjectFileConstants.ProjectGuid).EvaluatedValue
+          member this.ProjectProvider = None
+          member this.AssemblyReferences() = [||]
+
     // Attempt to treat as MSBuild project.
     let internal NewMSBuildProjectSite(configurationFunc, platformFunc, msBuildProjectName) = 
         let newProjectSite = new MSBuildProjectSite(msBuildProjectName,configurationFunc,platformFunc)
@@ -314,20 +322,17 @@ module internal Salsa =
     type DeclarationType = 
         | Class =0
         | Constant = 6
-        | FunctionType = 12             // Like 'type FunctionType=unit->unit' 
         | Enum = 18
         | EnumMember = 24
         | Event =30
         | Exception = 36
         | Interface = 48
         | Method = 72
-        | FunctionValue = 74            // Like 'type Function x = 0'
         | Module = 84
         | Namespace = 90
         | Property = 102
         | ValueType = 108               // Like 'type ValueType=int*int' 
         | RareType = 120                // Bucket for unusual types like 'type AsmType = (# "!0[]" #)'
-        | Record = 126
         | DiscriminatedUnion = 132
         
     type BuildAction =
@@ -453,7 +458,7 @@ module internal Salsa =
     
 
     // Result of querying the completion list
-    and CompletionItem = string * string * (unit -> string) * DeclarationType
+    and CompletionItem = CompletionItem of name: string * displayText: string * nameInCode: string * (unit -> string) * DeclarationType
 
     /// Representes the information that is displayed in the navigation bar
     and NavigationBarResult = 
@@ -526,8 +531,6 @@ module internal Salsa =
         abstract GetIdentifierAtCursor: OpenFile -> (string * int) option
         abstract GetF1KeywordAtCursor: OpenFile -> string option
         abstract GotoDefinitionAtCursor: OpenFile * bool -> GotoDefnResult
-        abstract GetNavigationContentAtCursor: OpenFile -> NavigationBarResult
-        abstract GetHiddenRegionCommands: OpenFile -> list<NewHiddenRegion> * Map<uint32, TextSpan>
         abstract CreatePhysicalProjectFileInMemory : files:(string*BuildAction*string option) list * references:(string*bool) list * projectReferences:string list * disabledWarnings:string list * defines:string list * versionFile: string * otherFlags:string * otherProjMisc:string * targetFrameworkVersion:string -> string
                 
         /// True if files outside of the project cone are added as links.
@@ -615,14 +618,14 @@ module internal Salsa =
                  versionFile,
                  otherFlags:string,
                  otherProjMisc:string,
-                 targetFrameworkVersion:string) =        
+                 targetFrameworkVersion:string) =
 
             // Determine which FSharp.targets file to use. If we use the installed
             // targets file then we check the registry for F#'s install path. Otherwise
             // we look in the same directory as the Unit Tests assembly.
             let targetsFileFolder =
                 if useInstalledTargets 
-                then Option.get Internal.Utilities.FSharpEnvironment.BinFolderOfDefaultFSharpCompiler
+                then Internal.Utilities.FSharpEnvironment.BinFolderOfDefaultFSharpCompiler(None).Value
                 else System.AppDomain.CurrentDomain.BaseDirectory
             
             let sb = new System.Text.StringBuilder()
@@ -633,7 +636,7 @@ module internal Salsa =
 //            The salsa layer does Configuration/Platform in a kind of hacky way
 //            Append "        <Configuration Condition=\" '$(Configuration)' == '' \">Debug</Configuration>"
 //            Append "        <Platform Condition=\" '$(Platform)' == '' \">AnyCPU</Platform>"
-            Append "        <OutputPath>bin\Debug\</OutputPath>"  
+            Append "        <OutputPath>bin\Debug\</OutputPath>"
             if versionFile<>null then Append (sprintf "        <VersionFile>%s</VersionFile>" versionFile)
             if otherFlags<>null then Append (sprintf "        <OtherFlags>%s --resolutions</OtherFlags>" otherFlags)
             if targetFrameworkVersion<>null then
@@ -690,10 +693,10 @@ module internal Salsa =
                 
             Append "    </ItemGroup>"
             Append otherProjMisc
-            
-            Append (sprintf "    <Import Project=\"%s\\Microsoft.FSharp.targets\"/>" targetsFileFolder)
+
+            let t = targetsFileFolder.TrimEnd([|'\\'|])
+            Append (sprintf "    <Import Project=\"%s\\Microsoft.FSharp.Targets\"/>" t)
             Append "</Project>"
-            
             sb.ToString()
 
         type MSBuildBehaviorHooks(useInstalledTargets) = 
@@ -710,10 +713,9 @@ module internal Salsa =
             interface ProjectBehaviorHooks with 
                 member x.CreateProjectHook (projectName, files, references, projectReferences, disabledWarnings, defines, versionFile, otherFlags, preImportXml, targetFrameworkVersion : string) =
                     if File.Exists(projectName) then File.Delete(projectName)
-
                     let text = CreateMsBuildProjectText useInstalledTargets (files, references, projectReferences, disabledWarnings, defines, versionFile, otherFlags, preImportXml, targetFrameworkVersion)
-                    File.AppendAllText(projectName,text+"\r\n")
-            
+                    File.WriteAllText(projectName,text+"\r\n")
+
                 member x.InitializeProjectHook op = openProject <- Some(op:?>IOpenProject)
                 member x.MakeHierarchyHook (projdir, fullname, projectname, configChangeNotifier, serviceProvider) = 
                     let projectSite = NewMSBuildProjectSite(Conf, Plat, fullname)
@@ -1103,7 +1105,9 @@ module internal Salsa =
             
             member file.GetFileName() = filename
             member file.GetProjectOptionsOfScript() = 
-                project.Solution.Vs.LanguageService.FSharpChecker.GetProjectOptionsFromScript(filename, file.CombinedLines, System.DateTime(2000,1,1), [| |]) |> Async.RunSynchronously
+                project.Solution.Vs.LanguageService.FSharpChecker.GetProjectOptionsFromScript(filename, file.CombinedLines, System.DateTime(2000,1,1), [| |]) 
+                |> Async.RunSynchronously
+                |> fst // drop diagnostics
                  
             member file.RecolorizeWholeFile() = ()
             member file.RecolorizeLine (_line:int) = ()
@@ -1324,7 +1328,7 @@ module internal Salsa =
                     let result = Array.zeroCreate count
                     for i in 0..count-1 do 
                         let glyph = enum<DeclarationType> (declarations.GetGlyph(filterText,i))
-                        result.[i] <- (declarations.GetDisplayText(filterText,i), declarations.GetName(filterText,i), (fun () -> declarations.GetDescription(filterText,i)), glyph)
+                        result.[i] <- CompletionItem (declarations.GetDisplayText(filterText,i), declarations.GetName(filterText,i), declarations.GetNameInCode(filterText,i), (fun () -> declarations.GetDescription(filterText,i)), glyph)
                     result
 
             member file.AutoCompleteAtCursor(?filterText) = file.AutoCompleteAtCursorImpl(BackgroundRequestReason.MemberSelect, ?filterText=filterText)
@@ -1371,45 +1375,6 @@ module internal Salsa =
               currentAuthoringScope.GetF1KeywordString(span, context) 
               !keyword
 
-            member file.GetNavigationContentAtCursor () =
-              file.EnsureInitiallyFocusedInVs ()
-              let row = cursor.line - 1
-              let col = cursor.col - 1
-              let ti   = new TokenInfo ()
-              let sink = new AuthoringSink (BackgroundRequestReason.FullTypeCheck, row, col, maxErrors)
-              let snapshot = VsActual.createTextBuffer(file.CombinedLines).CurrentSnapshot 
-              let pr   = project.Solution.Vs.LanguageService.BackgroundRequests.CreateBackgroundRequest(row, col, ti, file.CombinedLines, snapshot, MethodTipMiscellany.Typing, System.IO.Path.GetFullPath file.Filename, BackgroundRequestReason.FullTypeCheck, view, sink, null, file.Source.ChangeCount, false)
-              project.Solution.Vs.LanguageService.BackgroundRequests.ExecuteBackgroundRequest(pr, file.Source) 
-              match project.Solution.Vs.LanguageService.BackgroundRequests.NavigationBarAndRegionInfo with
-              | Some(scope) ->
-                  let typesList = new Collections.ArrayList()
-                  let membersList = new Collections.ArrayList()
-                  let mutable selectedType = 0
-                  let mutable selectedMember = 0
-                  scope.SynchronizeNavigationDropDown(file.Filename, row, col, typesList, membersList, &selectedType, &selectedMember) |> ignore
-                  { TypesAndModules = (typesList.ToArray(typeof<DropDownMember>) :?> DropDownMember[])
-                    Members = (membersList.ToArray(typeof<DropDownMember>) :?> DropDownMember[])
-                    SelectedType = selectedType
-                    SelectedMember = selectedMember }
-              | _ -> 
-                  { TypesAndModules = [| |]; Members = [| |]; SelectedType = -1; SelectedMember = -1 }
-                  
-            member file.GetHiddenRegionCommands() =
-              file.EnsureInitiallyFocusedInVs ()
-              let row = cursor.line - 1
-              let col = cursor.col - 1
-              let ti   = new TokenInfo ()
-              let sink = new AuthoringSink (BackgroundRequestReason.FullTypeCheck, row, col, maxErrors)
-              let snapshot = VsActual.createTextBuffer(file.CombinedLines).CurrentSnapshot 
-              let pr   = project.Solution.Vs.LanguageService.BackgroundRequests.CreateBackgroundRequest(row, col, ti, file.CombinedLines, snapshot, MethodTipMiscellany.Typing, System.IO.Path.GetFullPath file.Filename, BackgroundRequestReason.FullTypeCheck, view, sink, null, file.Source.ChangeCount, false)
-              project.Solution.Vs.LanguageService.BackgroundRequests.ExecuteBackgroundRequest(pr, file.Source) 
-              match project.Solution.Vs.LanguageService.BackgroundRequests.NavigationBarAndRegionInfo with
-              | Some(scope) ->
-                  scope.GetHiddenRegions(file.Filename)
-              | _ -> 
-
-                  [], Map.empty
-            
             /// grab a particular line from a file
             member file.GetLineNumber n =
               file.EnsureInitiallyFocusedInVs ()
@@ -1481,13 +1446,18 @@ module internal Salsa =
             let tm = box (VsMocks.createTextManager())
             let documentationProvider = 
                 { new IDocumentationBuilder with
-                    override doc.AppendDocumentationFromProcessedXML(appendTo:StringBuilder,processedXml:string,showExceptions, showReturns, paramName) = 
-                        appendTo.AppendLine(processedXml)|> ignore 
-                    override doc.AppendDocumentation(appendTo:StringBuilder,filename:string,signature:string, showExceptions, showReturns, paramName) = 
-                        appendTo.AppendLine(sprintf "[Filename:%s]" filename).AppendLine(sprintf "[Signature:%s]" signature) |> ignore 
-                        if paramName.IsSome then appendTo.AppendLine(sprintf "[ParamName: %s]" paramName.Value) |> ignore
+                    override doc.AppendDocumentationFromProcessedXML(appendTo,processedXml:string,showExceptions, showReturns, paramName) = 
+                        appendTo.Add(Microsoft.FSharp.Compiler.Layout.TaggedTextOps.tagText processedXml)
+                        appendTo.Add(Microsoft.FSharp.Compiler.Layout.TaggedTextOps.Literals.lineBreak)
+                    override doc.AppendDocumentation(appendTo,filename:string,signature:string, showExceptions, showReturns, paramName) = 
+                        appendTo.Add(Microsoft.FSharp.Compiler.Layout.TaggedTextOps.tagText (sprintf "[Filename:%s]" filename))
+                        appendTo.Add(Microsoft.FSharp.Compiler.Layout.TaggedTextOps.Literals.lineBreak)
+                        appendTo.Add(Microsoft.FSharp.Compiler.Layout.TaggedTextOps.tagText (sprintf "[Signature:%s]" signature))
+                        appendTo.Add(Microsoft.FSharp.Compiler.Layout.TaggedTextOps.Literals.lineBreak)
+                        if paramName.IsSome then
+                            appendTo.Add(Microsoft.FSharp.Compiler.Layout.TaggedTextOps.tagText (sprintf "[ParamName: %s]" paramName.Value))
+                            appendTo.Add(Microsoft.FSharp.Compiler.Layout.TaggedTextOps.Literals.lineBreak)
                 } 
- 
 
             let sp2 = 
                { new System.IServiceProvider with 
@@ -1565,8 +1535,6 @@ module internal Salsa =
             member ops.CompleteAtCursorForReason (file,reason) = OpenFileSimpl(file).CompleteAtCursorForReason(reason)
             member ops.CompletionBestMatchAtCursorFor (file, value, filterText) = (OpenFileSimpl(file)).CompletionBestMatchAtCursorFor(value, ?filterText=filterText)
             member ops.GotoDefinitionAtCursor (file, forceGen) = (OpenFileSimpl file).GotoDefinitionAtCursor forceGen
-            member ops.GetNavigationContentAtCursor file = OpenFileSimpl(file).GetNavigationContentAtCursor()
-            member ops.GetHiddenRegionCommands file = OpenFileSimpl(file).GetHiddenRegionCommands()
             member ops.GetIdentifierAtCursor file = OpenFileSimpl(file).GetIdentifierAtCursor ()
             member ops.GetF1KeywordAtCursor file = OpenFileSimpl(file).GetF1KeywordAtCursor ()
             member ops.GetLineNumber (file, n) = OpenFileSimpl(file).GetLineNumber n
@@ -1582,16 +1550,16 @@ module internal Salsa =
             member ops.CleanUp vs = VsImpl(vs).CleanUp()
             member ops.ClearLanguageServiceRootCachesAndCollectAndFinalizeAllTransients vs = VsImpl(vs).ClearLanguageServiceRootCachesAndCollectAndFinalizeAllTransients()
             member ops.AutoCompleteMemberDataTipsThrowsScope message = 
-                ItemDescriptionsImpl.ToolTipFault <- Some message
-                { new System.IDisposable with member x.Dispose() = ItemDescriptionsImpl.ToolTipFault <- None }
+                SymbolHelpers.ToolTipFault <- Some message
+                { new System.IDisposable with member x.Dispose() = SymbolHelpers.ToolTipFault <- None }
             member ops.OutOfConeFilesAreAddedAsLinks = false                
             member ops.SupportsOutputWindowPane = false
             member ops.CleanInvisibleProject vs = VsImpl(vs).CleanInvisibleProject()
 
     let BuiltMSBuildBehaviourHooks() = Privates.MSBuildBehaviorHooks(false) :> ProjectBehaviorHooks
             
-    /// Salsa tests which create .fsproj files using the freshly built version of Microsoft.FSharp.targets and FSharp.Build
+    /// Salsa tests which create .fsproj files using the freshly built version of Microsoft.FSharp.Targets and FSharp.Build
     let BuiltMSBuildTestFlavour() = MSBuildTestFlavor(false) :> VsOps
 
-    /// Salsa tests which create .fsproj files using the installed version of Microsoft.FSharp.targets.
+    /// Salsa tests which create .fsproj files using the installed version of Microsoft.FSharp.Targets.
     let InstalledMSBuildTestFlavour() = MSBuildTestFlavor(true) :> VsOps

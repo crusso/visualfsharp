@@ -95,8 +95,7 @@ namespace Microsoft.FSharp.Collections
         [<CompiledName("ZeroCreate")>]
         val zeroCreate : length1:int -> length2:int -> 'T[,]
 
-#if FX_NO_BASED_ARRAYS
-#else
+#if !FX_NO_BASED_ARRAYS
         /// <summary>Creates a based array given the dimensions and a generator function to compute the elements.</summary>
         ///
         /// <param name="base1">The base for the first dimension of the array.</param>
@@ -226,4 +225,5 @@ namespace Microsoft.FSharp.Collections
         /// <exception cref="System.ArgumentException">Thrown when the indices are negative or exceed the bounds of the array.</exception>
         [<CompiledName("Get")>]
         val get: array:'T[,] -> index1:int -> index2:int -> 'T
+
 

@@ -4,28 +4,16 @@
 /// constraint solving and method overload resolution.
 module internal Microsoft.FSharp.Compiler.TypeRelations
 
-open Internal.Utilities
-open System.Text
-
 open Microsoft.FSharp.Compiler 
-open Microsoft.FSharp.Compiler.AbstractIL 
-open Microsoft.FSharp.Compiler.AbstractIL.IL 
 open Microsoft.FSharp.Compiler.AbstractIL.Internal 
 open Microsoft.FSharp.Compiler.AbstractIL.Internal.Library 
-open Microsoft.FSharp.Compiler.AbstractIL.Diagnostics 
-open Microsoft.FSharp.Compiler.Range
-open Microsoft.FSharp.Compiler.Ast
 open Microsoft.FSharp.Compiler.ErrorLogger
 open Microsoft.FSharp.Compiler.Tast
 open Microsoft.FSharp.Compiler.Tastops
 open Microsoft.FSharp.Compiler.Tastops.DebugPrint
 open Microsoft.FSharp.Compiler.TcGlobals
-open Microsoft.FSharp.Compiler.AbstractIL.IL 
-open Microsoft.FSharp.Compiler.Lib
 open Microsoft.FSharp.Compiler.Infos
 open Microsoft.FSharp.Compiler.PrettyNaming
-open Microsoft.FSharp.Compiler.AccessibilityLogic
-open Microsoft.FSharp.Compiler.NameResolution
 
 //-------------------------------------------------------------------------
 // a :> b without coercion based on finalized (no type variable) types
@@ -53,7 +41,8 @@ let rec TypeDefinitelySubsumesTypeNoCoercion ndeep g amap m ty1 ty2 =
         List.lengthsEqAndForall2 (typeEquiv g) l1 l2
     | TType_ucase (tc1,l1)  ,TType_ucase (tc2,l2) when g.unionCaseRefEq tc1 tc2  ->  
         List.lengthsEqAndForall2 (typeEquiv g) l1 l2
-    | TType_tuple l1    ,TType_tuple l2     -> 
+    | TType_tuple (tupInfo1,l1)    ,TType_tuple (tupInfo2,l2)     -> 
+        evalTupInfoIsStruct tupInfo1 = evalTupInfoIsStruct tupInfo2 && 
         List.lengthsEqAndForall2 (typeEquiv g) l1 l2 
     | TType_fun (d1,r1)  ,TType_fun (d2,r2)   -> 
         typeEquiv g d1 d2 && typeEquiv g r1 r2
@@ -88,7 +77,8 @@ let rec TypesFeasiblyEquiv ndeep g amap m ty1 ty2 =
     | _, TType_var _ -> true
     | TType_app (tc1,l1)  ,TType_app (tc2,l2) when tyconRefEq g tc1 tc2  ->  
         List.lengthsEqAndForall2 (TypesFeasiblyEquiv ndeep g amap m) l1 l2
-    | TType_tuple l1    ,TType_tuple l2     -> 
+    | TType_tuple (tupInfo1, l1)    ,TType_tuple (tupInfo2, l2)     -> 
+        evalTupInfoIsStruct tupInfo1 = evalTupInfoIsStruct tupInfo2 &&
         List.lengthsEqAndForall2 (TypesFeasiblyEquiv ndeep g amap m) l1 l2 
     | TType_fun (d1,r1)  ,TType_fun (d2,r2)   -> 
         (TypesFeasiblyEquiv ndeep g amap m) d1 d2 && (TypesFeasiblyEquiv ndeep g amap m) r1 r2
@@ -109,7 +99,8 @@ let rec TypeFeasiblySubsumesType ndeep g amap m ty1 canCoerce ty2 =
 
     | TType_app (tc1,l1)  ,TType_app (tc2,l2) when tyconRefEq g tc1 tc2  ->  
         List.lengthsEqAndForall2 (TypesFeasiblyEquiv ndeep g amap m) l1 l2
-    | TType_tuple l1    ,TType_tuple l2     -> 
+    | TType_tuple (tupInfo1,l1)    ,TType_tuple (tupInfo2,l2)     -> 
+        evalTupInfoIsStruct tupInfo1 = evalTupInfoIsStruct tupInfo2 && 
         List.lengthsEqAndForall2 (TypesFeasiblyEquiv ndeep g amap m) l1 l2 
     | TType_fun (d1,r1)  ,TType_fun (d2,r2)   -> 
         (TypesFeasiblyEquiv ndeep g amap m) d1 d2 && (TypesFeasiblyEquiv ndeep g amap m) r1 r2
@@ -134,13 +125,13 @@ let rec TypeFeasiblySubsumesType ndeep g amap m ty1 canCoerce ty2 =
 /// variables when compiling patterns at generalized bindings.
 ///     e.g. let ([],x) = ([],[])
 /// Here x gets a generalized type "list<'T>".
-let ChooseTyparSolutionAndRange g amap (tp:Typar) =
+let ChooseTyparSolutionAndRange (g: TcGlobals) amap (tp:Typar) =
     let m = tp.Range
     let max,m = 
          let initial = 
              match tp.Kind with 
              | TyparKind.Type -> g.obj_ty 
-             | TyparKind.Measure -> TType_measure MeasureOne
+             | TyparKind.Measure -> TType_measure Measure.One
          // Loop through the constraints computing the lub
          ((initial,m), tp.Constraints) ||> List.fold (fun (maxSoFar,_) tpc -> 
              let join m x = 
@@ -185,7 +176,7 @@ let ChooseTyparSolutionAndRange g amap (tp:Typar) =
 
 let ChooseTyparSolution g amap tp = 
     let ty,_m = ChooseTyparSolutionAndRange g amap tp
-    if tp.Rigidity = TyparRigidity.Anon && typeEquiv g ty (TType_measure MeasureOne) then
+    if tp.Rigidity = TyparRigidity.Anon && typeEquiv g ty (TType_measure Measure.One) then
         warning(Error(FSComp.SR.csCodeLessGeneric(),tp.Range))
     ty
 
@@ -256,7 +247,7 @@ let tryDestTopLambda g amap (ValReprInfo (tpNames,_,_) as tvd) (e,ty) =
     let n = tvd.NumCurriedArgs
     let tps,taue,tauty = 
         match e with 
-        | Expr.TyLambda (_,tps,b,_,retTy) when nonNil tpNames -> tps,b,retTy 
+        | Expr.TyLambda (_,tps,b,_,retTy) when not (isNil tpNames) -> tps,b,retTy 
         | _ -> [],e,ty
     let ctorThisValOpt,baseValOpt,vsl,body,retTy = startStripLambdaUpto n (taue,tauty)
     if vsl.Length <> n then 
@@ -282,7 +273,7 @@ let IteratedAdjustArityOfLambda g amap topValInfo e =
     let tps,ctorThisValOpt,baseValOpt,vsl,body,bodyty = destTopLambda g amap topValInfo (e, tyOfExpr g e)
     let arities = topValInfo.AritiesOfArgs
     if arities.Length <> vsl.Length then 
-        errorR(InternalError(sprintf "IteratedAdjustArityOfLambda, List.length arities = %d, List.length vsl = %d" (List.length arities) (List.length vsl), body.Range))
+        errorR(InternalError(sprintf "IteratedAdjustArityOfLambda, List.length arities = %d, List.length vsl = %d" arities.Length vsl.Length, body.Range))
     let vsl,body = IteratedAdjustArityOfLambdaBody g arities vsl body
     tps,ctorThisValOpt,baseValOpt,vsl,body,bodyty
 

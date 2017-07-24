@@ -1,6 +1,6 @@
 // #Conformance #ComputationExpressions #Async 
 
-#if Portable
+#if TESTS_AS_APP
 module Core_controlStackOverflow
 #endif
 
@@ -8,7 +8,7 @@ module Core_controlStackOverflow
 
 #nowarn "40" // recursive references
 
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
 open System.Threading.Tasks
 #endif
 
@@ -36,8 +36,7 @@ let report_failure s =
      log (sprintf "FAILURE: %s failed" s)
   )
 
-#if Portable
-#else
+#if !FX_PORTABLE_OR_NETSTANDARD
 System.AppDomain.CurrentDomain.UnhandledException.AddHandler(
        fun _ (args:System.UnhandledExceptionEventArgs) ->
           lock syncObj (fun () ->
@@ -55,20 +54,6 @@ let checkQuiet s x1 x2 =
 let check s x1 x2 = 
     if x1 = x2 then test s true
     else (test s false; printfn "expected: %A, got %A" x2 x1)
-
-#if NetCore
-#else
-let argv = System.Environment.GetCommandLineArgs() 
-let SetCulture() = 
-  if argv.Length > 2 && argv.[1] = "--culture" then  begin
-    let cultureString = argv.[2] in 
-    let culture = new System.Globalization.CultureInfo(cultureString) in 
-    stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-    System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
-  end 
-  
-do SetCulture()    
-#endif
 
 (*******************************************************************************)
 open Microsoft.FSharp.Control
@@ -246,7 +231,7 @@ module StackDiveTests =
 
       let quwiAsync x =
             Async.FromContinuations(fun (c,_,_) ->
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
                 Task.Run(
                     fun _ -> 
                         async { 
@@ -277,7 +262,6 @@ module StackDiveTests =
           (so8 10000 |> Async.RunSynchronously)
           8
 
-  test()
 
 module ReturnStackoverflow =
     let test () =
@@ -415,22 +399,22 @@ module ReturnStackoverflow =
              |  :? System.OperationCanceledException -> "success")
             "success"
 
-    test()
 (*******************************************************************************)
-#if Portable
-let aa = 
-    if not failures.IsEmpty then exit 1
-    else stdout.WriteLine "Test Passed"; exit 0
+let RunAll() = 
+    StackDiveTests.test()
+    ReturnStackoverflow.test()
+
+#if TESTS_AS_APP
+let RUN() = RunAll(); failures
 #else
-let _ = 
-  if not failures.IsEmpty then (stdout.WriteLine("Test Failed, failures = {0}", failures); exit 1) 
-  else (stdout.WriteLine "Test Passed"; 
-        log "ALL OK, HAPPY HOLIDAYS, MERRY CHRISTMAS!"
-        System.IO.File.WriteAllText("test.ok","ok"); 
-// debug: why is the fsi test failing?  is it because test.ok does not exist?
-        if System.IO.File.Exists("test.ok") then
-            stdout.WriteLine ("test.ok found at {0}", System.IO.FileInfo("test.ok").FullName)
-        else
-            stdout.WriteLine ("test.ok not found")
-        exit 0)
+RunAll()
+let aa =
+  if not failures.IsEmpty then 
+      stdout.WriteLine "Test Failed"
+      exit 1
+  else   
+      stdout.WriteLine "Test Passed"
+      log "ALL OK, HAPPY HOLIDAYS, MERRY CHRISTMAS!"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
 #endif

@@ -1,6 +1,6 @@
 // #Conformance #Printing 
 
-#if Portable
+#if TESTS_AS_APP
 module Core_printf
 #endif
 
@@ -8,23 +8,12 @@ module Core_printf
 
 open Printf
 
-let failures = ref false
-let report_failure () = 
-  stderr.WriteLine " NO"; failures := true
+let failures = ref []
 
-#if NetCore
-#else
-let argv = System.Environment.GetCommandLineArgs() 
-let SetCulture() = 
-  if argv.Length > 2 && argv.[1] = "--culture" then  begin
-    let cultureString = argv.[2] in 
-    let culture = new System.Globalization.CultureInfo(cultureString) in 
-    stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-    System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
-  end 
-  
-do SetCulture()    
-#endif
+let report_failure (s : string) = 
+    stderr.Write" NO: "
+    stderr.WriteLine s
+    failures := !failures @ [s]
 
 // change this to true to run every test case
 // leave as false to randomly execute a subset of cases (this is a very expensive test area)
@@ -38,8 +27,7 @@ let test t (s1:Lazy<string>) s2 =
   if runEveryTest || (rnd.Next() % 10) = 0 then
       let s1 = s1.Force()
       if s1 <> s2 then 
-        (stderr.WriteLine ("test "+t+": expected \n\t'"+s2+"' but produced \n\t'"+s1+"'");
-         failures := true)
+        report_failure ("test "+t+": expected \n\t'"+s2+"' but produced \n\t'"+s1+"'")
       else
         stdout.WriteLine ("test "+t+": correctly produced '"+s1+"'")   
 
@@ -47,6 +35,7 @@ let verify actual expected = test expected actual expected
 
 let adjust1 obj n1 = unbox ((unbox obj) n1)
 
+(*
 let _ = test "percent00" (lazy(sprintf "%%")) "%"
 let _ = test "percent01" (lazy(sprintf " %%%% ")) " %% "
 let _ = test "percent02" (lazy(sprintf "%.2f%.2%" 2.)) "2.00%"
@@ -57,6 +46,7 @@ let _ = test "percent06" (lazy(sprintf "%*% %*d" 20 8 5)) "%        5"
 let _ = test "percent07" (lazy(sprintf "%-+.*%%*d%*.*%" 55 0 8 77 88)) "%8%"
 let _ = test "percent08" (lazy(sprintf "%%d")) "%d"
 let _ = test "percent09" (lazy(sprintf "% *% %d" 10 6)) "% 6"
+*)
 
 let _ = test "cewoui2a" (lazy(sprintf "%o" 0)) "0"
 let _ = test "cewoui2b" (lazy(sprintf "%o" 0)) "0"
@@ -297,9 +287,6 @@ let _ = test "bug600b2" (lazy(bug600b "2")) "2" (* not 22! *)
 let bug600c = sprintf "%x"
 let _ = test "bug600a3" (lazy(bug600c 2)) "2" 
 let _ = test "bug600b3" (lazy(bug600c 2)) "2" (* not 22! *)
-
-let _ = 
-  if !failures then (stdout.WriteLine "Test Failed"; exit 1) 
 
 let _ = test "ckwoih" (lazy(sprintf "%x" 0xFFy)) ("ff")
 let _ = test "ckwoih" (lazy(sprintf "%x" 0xFFFFs)) ("ffff")
@@ -9306,15 +9293,18 @@ func6000()
 func7000()
 func8000()
 
-#if Portable
-let aa =
-    if !failures then (printfn "Test Failed, failures = %A" failures; exit 1)
-    else (stdout.WriteLine "Test Passed"; exit 0)
+
+#if TESTS_AS_APP
+let RUN() = !failures
 #else
-let _ = 
-    if !failures then (printf "Test Failed"; exit 1) 
+let aa =
+  match !failures with 
+  | [] -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
 #endif
-  
-do (stdout.WriteLine "Test Passed"; 
-    System.IO.File.WriteAllText("test.ok","ok"); 
-    exit 0)
+

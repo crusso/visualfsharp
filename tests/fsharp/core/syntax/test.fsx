@@ -2,7 +2,7 @@
 //The shebang above should be treated like a line comment. #! is only allowed in the first byte of a file.
 
 // #Regression #Conformance #Operators #SyntacticSugar #Exceptions #ControlFlow #Arrays #Tuples #Lists #Classes #Constants #Records 
-#if Portable
+#if TESTS_AS_APP
 module Core_syntax
 #endif
 #light
@@ -36,21 +36,6 @@ test "line number test" (__LINE__ = "29")
 test "line number test" (__SOURCE_FILE__ = "original-test-file.fs")
 
 
-#if NetCore
-#else
-let argv = System.Environment.GetCommandLineArgs() 
-
-let SetCulture() = 
-  if argv.Length > 2 && argv.[1] = "--culture" then  
-    let cultureString = argv.[2] 
-    let culture = new System.Globalization.CultureInfo(cultureString) 
-    stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-    System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
- 
-
-do SetCulture();;
-#endif
-  
 let SimpleArithmetic( )
     = let x = 10 + 12 - 3
        in let y = x * 2 + 1 in
@@ -69,6 +54,61 @@ module CheckDynamicOperatorsOnTypes =
     let hw  : string = foo ? world
     let hw2  : unit = foo ? world <- "3"
         
+module CheckDynamicOperatorsOnTypesUnconstrained = 
+    type OpDynamic() =
+      static member ( ? ) (x, n) = x
+      member x.Prop = 1
+
+    let f()  = 
+      let op  = OpDynamic ()
+      op?Hello.Prop
+
+module MoreDynamicOpTests  =
+    module Test1 = 
+     type 'a Doge () = class end
+     with
+        static member (|~>) (_ : 'b Doge, _ : 'b -> 'c) : 'c Doge = Doge ()
+
+     let x : System.DateTime Doge = Doge ()
+
+     let y = x |~> (fun dt -> dt.Year) // error on this line around 'dt.Year'
+
+
+    module Test2 = 
+     type OpDynamic() =
+      static member ( ? ) (x, n) = x
+      member x.Prop = 1
+
+     let f()  = 
+      let op  = OpDynamic ()
+      op?Hello.Prop
+
+    module Test3 = 
+     type M() =
+        static member ($) (x:string, M) = ""
+        static member ($) (x:int   , M) = 0
+        static member ($) (x:float , M) = 0.0
+
+     let inline empty< ^R, ^M when (^R or ^M) : (static member ($) : ^R * M ->  ^R) and ^M :> M> =
+        let m = M()
+        ((^R or ^M) : (static member ($): ^R * M -> ^R ) (Unchecked.defaultof<'R>, m))
+
+     let a :int    = empty<  _ , M >
+     let b :string = empty<  _ , M >
+
+    module Test4 = 
+     type M() =
+        static member ($) (x:string, M) = ""
+        static member ($) (x:int   , M) = 0
+        static member ($) (x:float , M) = 0.0
+
+     let inline empty< ^R when ( ^R or  M) : (static member ( $ ) :  ^R *  M ->  ^R)> =        
+        let m = M()
+        Unchecked.defaultof< ^R> $ m: ^R
+
+// Copyright (c) Microsoft Corporation 2005-2006.  .
+
+
 open System
 
 //--------------------------------------------------------
@@ -564,7 +604,7 @@ type WrapOneStream =
         override x.Finalize() = x.Dispose(false)
         member x.Dispose(deep: bool) =  
             printf "disposing, deep = %b!\n" deep;
-            if deep then x.myManagedResource.Close()
+            if deep then x.myManagedResource.Dispose()
   end 
 
 let dummy4() = ()
@@ -614,14 +654,14 @@ let LineDirectedInputSample1() =
     // Write a test file
     let outputChannel = System.IO.File.CreateText @"test.txt" 
     outputChannel.Write "This is a test file.\r\nIt is easy to read.";
-    outputChannel.Close();
+    outputChannel.Dispose();
     
     // Now read the test file.
     let inputChannel = System.IO.File.OpenText @"test.txt" 
     let line1 = inputChannel.ReadLine() 
     let line2 = inputChannel.ReadLine() 
     // Don't forget to close the channel
-    inputChannel.Close();
+    inputChannel.Dispose();
     printf "line1=%s\nline2=%s\n" line1 line2
 
 module InfixTokenIndentationExamples = begin
@@ -797,19 +837,17 @@ let testTryFinallySyntaxOnOneLine () =
     try () finally ()
 
 
+#if !TESTS_AS_APP && !FX_PORTABLE_OR_NETSTANDARD
 type SampleForm = 
   class
-  #if Portable
-    inherit System.Object
-  #else
     inherit System.Windows.Forms.Form
-  #endif
     new () as this =
        { }
        
        then 
         ()
   end
+#endif
 
 (* check do introduces a #light block *)
 begin 
@@ -997,7 +1035,9 @@ do test "vliwe94"   (f -2L = - 2L)
 do test "vliwe95"   (f -2n = - 2n)
 do test "vliwe96"   (f -2.0 = - 2.0)
 do test "vliwe97"   (f -2.0f = - 2.0f)
+#if !FX_PORTABLE_OR_NETSTANDARD
 do test "vliwe99"   (f -2I = - 2I)
+#endif
 
 do test "vliwe9q"   ((function -2y -> true | _ -> false) (- 2y))
 do test "vliwe9w"   ((function -2s -> true | _ -> false) (- 2s))
@@ -1794,9 +1834,17 @@ module AdHocTests =
               let (b, _, _) = (1,2,3)
               [b]      
     
-let _ = stdout.WriteLine "Test FInishing"
+#if TESTS_AS_APP
+let RUN() = !failures
+#else
 let aa =
-  if !failures then (stdout.WriteLine "Test Failed"; exit 1) 
-  else (stdout.WriteLine "Test Passed"; 
-        System.IO.File.WriteAllText("test.ok","ok"); 
-        exit 0)
+  match !failures with 
+  | false -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
+#endif
+

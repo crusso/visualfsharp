@@ -1,5 +1,5 @@
 ﻿// #Quotations #Query
-#if Portable
+#if TESTS_AS_APP
 module Core_queriesCustomQueryOps
 #endif
 
@@ -15,29 +15,20 @@ open Microsoft.FSharp.Linq.RuntimeHelpers
 
 [<AutoOpen>]
 module Infrastructure =
-    let mutable failures = []
-    let reportFailure s = 
-        stderr.WriteLine " NO"; failures <- s :: failures
+    let failures = ref []
 
-#if NetCore
-#else
-    let argv = System.Environment.GetCommandLineArgs() 
-    let SetCulture() = 
-        if argv.Length > 2 && argv.[1] = "--culture" then  
-            let cultureString = argv.[2] 
-            let culture = new System.Globalization.CultureInfo(cultureString) 
-            stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-            System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
-  
-    do SetCulture()    
-#endif
+    let report_failure (s : string) = 
+        stderr.Write" NO: "
+        stderr.WriteLine s
+        failures := !failures @ [s]
+
+
 
     let check  s v1 v2 = 
        if v1 = v2 then 
            printfn "test %s...passed " s 
        else 
-           failures <- failures @ [(s, box v1, box v2)]
-           printfn "test %s...failed, expected %A got %A" s v2 v1
+           report_failure (sprintf "test %s...failed, expected %A got %A" s v2 v1)
 
     let test s b = check s b true
 
@@ -460,9 +451,18 @@ module ProbabilityWorkflow =
        printfn "sample #%d = %A" i (v1,v2)
        // Every sample should be identical on left and right because of the condition
        check "cwnew0" v1 v2
-
+       
+#if TESTS_AS_APP
+let RUN() = !failures
+#else
 let aa =
-  if not failures.IsEmpty then (printfn "Test Failed, failures = %A" failures; exit 1) 
-  else (stdout.WriteLine "Test Passed"; 
-        System.IO.File.WriteAllText("test.ok","ok"); 
-        exit 0)
+  match !failures with 
+  | [] -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
+#endif
+

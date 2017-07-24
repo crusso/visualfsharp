@@ -27,7 +27,6 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
     open Microsoft.VisualStudio
     open Microsoft.VisualStudio.Shell
     open Microsoft.VisualStudio.Shell.Interop
-    open Microsoft.VisualStudio.Shell.Flavor
     open Microsoft.VisualStudio.OLE.Interop
     open Microsoft.VisualStudio.FSharp.ProjectSystem
     open Microsoft.VisualStudio.FSharp.LanguageService
@@ -47,7 +46,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         let mutable document : System.Xml.Linq.XDocument = null
         let mutable buffer : IVsTextLines = null
         let mutable rdtCookie : uint32 = 0u
-
+        
         member private x.InitDocData(itemid, filename) =
             let mutable hr = VSConstants.E_FAIL
             let rdt = site.GetService(typeof<SVsRunningDocumentTable>) :?> IVsRunningDocumentTable

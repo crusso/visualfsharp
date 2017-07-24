@@ -1,20 +1,24 @@
 ﻿// #Conformance #Quotations #Interop #Classes #ObjectConstructors #Attributes #Reflection 
-#if Portable
+#if TESTS_AS_APP
 module Core_quotes
 #endif
 #light
 
-#if Portable
-#else
+#if !TESTS_AS_APP && !FX_PORTABLE_OR_NETSTANDARD
 #r "cslib.dll"
 #endif
 
 
 #nowarn "57"
-let mutable failures = []
-let report_failure s = 
-    stderr.WriteLine " NO"; failures <- s :: failures
+let failures = ref []
+
+let report_failure (s : string) = 
+    stderr.Write" NO: "
+    stderr.WriteLine s
+    failures := !failures @ [s]
+
 let test s b = stderr.Write(s:string);  if b then stderr.WriteLine " OK" else report_failure s
+
 let check s v1 v2 = 
    stderr.Write(s:string);  
    if (v1 = v2) then 
@@ -24,21 +28,8 @@ let check s v1 v2 =
        report_failure s
 
 
-#if NetCore
-#else
-let argv = System.Environment.GetCommandLineArgs() 
-let SetCulture() = 
-    if argv.Length > 2 && argv.[1] = "--culture" then  
-        let cultureString = argv.[2] 
-        let culture = new System.Globalization.CultureInfo(cultureString) 
-        stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-        System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
-  
-do SetCulture()    
-#endif
-
-
 open System
+open System.Reflection
 open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
 open Microsoft.FSharp.Quotations.DerivedPatterns
@@ -58,11 +49,9 @@ let (|TupleTy|_|) ty =
         Some (t1, t2)
     else None
 
-#if Portable
 [<Struct>]
 type S = 
     val mutable x : int
-#endif
 
 
 module TypedTest = begin 
@@ -107,8 +96,7 @@ module TypedTest = begin
     test "check ~UInt64"  ((<@  "1"  @> |> (function UInt64 _ ->   false | _ -> true))) 
     test "check ~String"  ((<@  1    @> |> (function String "1" -> false | _ -> true))) 
 
-#if FSHARP_CORE_31
-#else
+#if !FSHARP_CORE_31
     test "check Decimal"  ((<@  1M   @> |> (function Decimal 1M -> true | _ -> false))) 
     test "check ~Decimal" ((<@  "1"  @> |> (function Decimal _ ->  false | _ -> true))) 
     test "check ~Decimal neither" ((<@ 1M + 1M @> |> (function Decimal _ ->  false | _ -> true))) 
@@ -364,7 +352,9 @@ module TypedTest = begin
     test "check  PropertyGet (static)" ((<@ System.DateTime.Now @> |> (function PropertyGet(None,_,[]) -> true | _ -> false))) 
     test "check  PropertyGet (instance)" ((<@ ("1").Length @> |> (function PropertyGet(Some(String("1")),_,[]) -> true | _ -> false))) 
 
+#if !FX_PORTABLE_OR_NETSTANDARD
     test "check  PropertySet (static)" ((<@ System.Environment.ExitCode <- 1 @> |> (function PropertySet(None,_,[],Int32(1)) -> true | _ -> false))) 
+#endif
     test "check  PropertySet (instance)" ((<@ ("1").Length @> |> (function PropertyGet(Some(String("1")),_,[]) -> true | _ -> false))) 
 
     test "check null (string)"   (<@ (null:string) @> |> (function Value(null,ty) when ty = typeof<string> -> true | _ -> false))
@@ -531,8 +521,7 @@ module TypedTest = begin
             |   _ -> false
         end
 
-#if FSHARP_CORE_31
-#else
+#if !FSHARP_CORE_31 && !TESTS_AS_APP && !FX_PORTABLE_OR_NETSTANDARD
     test "check accesses to readonly fields in ReflectedDefinitions" 
         begin
             let c1 = Class1("a")
@@ -1610,6 +1599,96 @@ module MoreQuotationsTests =
         let _ = <@@ v2.Int32ExtensionMethod5 @@> |> printfn "quote = %A"
 
 
+module QuotationConstructionTests = 
+    let arr = [| 1;2;3;4;5 |]
+    let f : int -> int = printfn "hello"; (fun x -> x)
+    let f2 : int * int -> int -> int = printfn "hello"; (fun (x,y) z -> x + y + z)
+    let F (x:int) = x
+    let F2 (x:int,y:int) (z:int) = x + y + z
+
+    type Foo () =
+        member t.Item with get (index:int) = 1
+                      and set (index:int) (value:int) = ()
+
+    let ctorof q = match q with Patterns.NewObject(cinfo,_) -> cinfo | _ -> failwith "ctorof"
+    let methodof q = match q with DerivedPatterns.Lambdas(_,Patterns.Call(_,minfo,_)) -> minfo | _ -> failwith "methodof"
+    let fieldof q = match q with Patterns.FieldGet(_,finfo) -> finfo | _ -> failwith "fieldof"
+    let ucaseof q = match q with Patterns.NewUnionCase(ucinfo,_) -> ucinfo | _ -> failwith "ucaseof"
+    let getof q = match q with Patterns.PropertyGet(_,pinfo,_) -> pinfo | _ -> failwith "getof"
+    let setof q = match q with Patterns.PropertySet(_,pinfo,_,_) -> pinfo | _ -> failwith "setof"
+    check "vcknwwe01" (match Expr.AddressOf <@@ arr.[3] @@> with AddressOf(expr) -> expr = <@@ arr.[3] @@> | _ -> false) true
+    check "vcknwwe02" (match Expr.AddressSet (Expr.AddressOf <@@ arr.[3] @@>, <@@ 4 @@>) with AddressSet(AddressOf(expr),v) -> expr = <@@ arr.[3] @@> && v = <@@ 4 @@> | _ -> false) true
+    check "vcknwwe03" (match Expr.Application(<@@ f @@>,<@@ 5 @@>) with Application(f1,x) -> f1 = <@@ f @@> && x = <@@ 5 @@> | _ -> false) true
+    check "vcknwwe04" (match Expr.Applications(<@@ f @@>,[[ <@@ 5 @@> ]]) with Applications(f1,[[x]]) -> f1 = <@@ f @@> && x = <@@ 5 @@> | _ -> false) true
+    check "vcknwwe05" (match Expr.Applications(<@@ f2 @@>,[[ <@@ 5 @@>;<@@ 6 @@> ]; [ <@@ 7 @@> ]]) with Applications(f1,[[x;y];[z]]) -> f1 = <@@ f2 @@> && x = <@@ 5 @@> && y = <@@ 6 @@> && z = <@@ 7 @@>  | _ -> false) true
+    check "vcknwwe06" (match Expr.Call(methodof <@@ F2 @@>,[ <@@ 5 @@>;<@@ 6 @@>; <@@ 7 @@> ]) with Call(None,minfo,[x;y;z]) -> minfo = methodof <@@ F2 @@> && x = <@@ 5 @@> && y = <@@ 6 @@> && z = <@@ 7 @@>  | _ -> false) true
+    check "vcknwwe07" (Expr.Cast(<@@ 5 @@>) : Expr<int>) (<@ 5 @>)
+    check "vcknwwe08" (try let _ = Expr.Cast(<@@ 5 @@>) : Expr<string> in false with :? System.ArgumentException -> true) true
+    check "vcknwwe09" (match Expr.Coerce(<@@ 5 @@>, typeof<obj>) with Coerce(q,ty) -> ty = typeof<obj> && q = <@@ 5 @@> | _ -> false) true
+    check "vcknwwe0q" (match Expr.DefaultValue(typeof<obj>) with DefaultValue(ty) -> ty = typeof<obj> | _ -> false) true
+    check "vcknwwe0w" (match Expr.FieldGet(typeof<int>.GetField("MaxValue")) with FieldGet(None,finfo) -> finfo = typeof<int>.GetField("MaxValue") | _ -> false) true
+    check "vcknwwe0e" (match Expr.FieldSet(typeof<int>.GetField("MaxValue"),<@@ 1 @@>) with FieldSet(None,finfo,v) -> finfo = typeof<int>.GetField("MaxValue") && v = <@@ 1 @@> | _ -> false) true
+    check "vcknwwe0r" (match Expr.ForIntegerRangeLoop(Var.Global("i",typeof<int>),<@@ 1 @@>,<@@ 10 @@>,<@@ () @@>) with ForIntegerRangeLoop(v,start,finish,body) -> v = Var.Global("i",typeof<int>) && start = <@@ 1 @@> && finish = <@@ 10 @@> && body = <@@ () @@>  | _ -> false) true
+    check "vcknwwe0t" (match Expr.GlobalVar("i") : Expr<int> with Var(v) -> v = Var.Global("i",typeof<int>)   | _ -> false) true
+    check "vcknwwe0y" (match Expr.IfThenElse(<@@ true @@>,<@@ 1 @@>,<@@ 2 @@>) with IfThenElse(gd,t,e) -> gd = <@@ true @@> && t = <@@ 1 @@> && e = <@@ 2 @@>   | _ -> false) true
+    check "vcknwwe0u" (match Expr.Lambda(Var.Global("i",typeof<int>), <@@ 2 @@>) with Lambda(v,b) -> v = Var.Global("i",typeof<int>) && b = <@@ 2 @@>   | _ -> false) true
+    check "vcknwwe0i" (match Expr.Let(Var.Global("i",typeof<int>), <@@ 2 @@>, <@@ 3 @@>) with Let(v,e,b) -> v = Var.Global("i",typeof<int>) && e = <@@ 2 @@> && b = <@@ 3 @@>   | _ -> false) true
+    check "vcknwwe0o" (match Expr.LetRecursive([(Var.Global("i",typeof<int>), <@@ 2 @@>)], <@@ 3 @@>) with LetRecursive([(v,e)],b) -> v = Var.Global("i",typeof<int>) && e = <@@ 2 @@> && b = <@@ 3 @@>   | _ -> false) true
+    check "vcknwwe0p" (match Expr.LetRecursive([(Var.Global("i",typeof<int>), <@@ 2 @@>);(Var.Global("j",typeof<int>), <@@ 3 @@>)], <@@ 3 @@>) with LetRecursive([(v1,e1);(v2,e2)],b) -> v1 = Var.Global("i",typeof<int>) && v2 = Var.Global("j",typeof<int>) && e1 = <@@ 2 @@> && e2 = <@@ 3 @@> && b = <@@ 3 @@>   | _ -> false) true
+    check "vcknwwe0a" (Expr.NewArray(typeof<int>,[ <@@ 1 @@>; <@@ 2 @@> ])) <@@ [| 1;2 |] @@>
+    check "vcknwwe0s" (match Expr.NewDelegate(typeof<Action<int>>,[ Var.Global("i",typeof<int>) ], <@@ () @@>) with NewDelegate(ty,[v],e) -> ty = typeof<Action<int>> && v = Var.Global("i",typeof<int>) && e = <@@ () @@> | _ -> false) true
+    check "vcknwwe0d" (match Expr.NewObject(ctorof <@@ new obj() @@> ,[ ]) with NewObject(ty,[]) -> ty = ctorof <@@ new obj() @@> | _ -> false) true
+    check "vcknwwe0f" (match Expr.NewObject(ctorof <@@ new System.String('a',3) @@> ,[ <@@ 'b' @@>; <@@ 4 @@>]) with NewObject(ty,[x;y]) -> ty = ctorof <@@ new string('a',3) @@> && x = <@@ 'b' @@> && y = <@@ 4 @@> | _ -> false) true
+    check "vcknwwe0g" (Expr.NewRecord(typeof<int ref> ,[ <@@ 4 @@> ])) <@@ { contents = 4 } @@>
+    check "vcknwwe0h" (try let _ = Expr.NewTuple([]) in false with :? System.ArgumentException -> true) true
+    check "vcknwwe0j" (try let _ = Expr.NewTuple([ <@@ 1 @@> ]) in true with :? System.ArgumentException -> false) true
+    check "vcknwwe0k" (match Expr.NewTuple([ <@@ 'b' @@>; <@@ 4 @@>]) with NewTuple([x;y]) -> x = <@@ 'b' @@> && y = <@@ 4 @@> | _ -> false) true
+    check "vcknwwe0l" (Expr.NewTuple([ <@@ 'b' @@>; <@@ 4 @@>])) <@@ ('b',4) @@>
+    check "vcknwwe0z" (Expr.NewTuple([ <@@ 'b' @@>; <@@ 4 @@>; <@@ 5 @@>])) <@@ ('b',4,5) @@>
+    check "vcknwwe0x" (Expr.NewTuple([ <@@ 'b' @@>; <@@ 4 @@>; <@@ 5 @@>; <@@ 6 @@>])) <@@ ('b',4,5,6) @@>
+    check "vcknwwe0c" (Expr.NewTuple([ <@@ 'b' @@>; <@@ 4 @@>; <@@ 5 @@>; <@@ 6 @@>; <@@ 7 @@>])) <@@ ('b',4,5,6,7) @@>
+    check "vcknwwe0v" (Expr.NewTuple([ <@@ 'b' @@>; <@@ 4 @@>; <@@ 5 @@>; <@@ 6 @@>; <@@ 7 @@>; <@@ 8 @@>])) <@@ ('b',4,5,6,7,8) @@>
+    check "vcknwwe0b" (Expr.NewTuple([ <@@ 'b' @@>; <@@ 4 @@>; <@@ 5 @@>; <@@ 6 @@>; <@@ 7 @@>; <@@ 8 @@>; <@@ 9 @@>])) <@@ ('b',4,5,6,7,8,9) @@>
+    check "vcknwwe0n" (Expr.NewTuple([ <@@ 'b' @@>; <@@ 4 @@>; <@@ 5 @@>; <@@ 6 @@>; <@@ 7 @@>; <@@ 8 @@>; <@@ 9 @@>; <@@ 10 @@>])) <@@ ('b',4,5,6,7,8,9,10) @@>
+    check "vcknwwe0m" (Expr.NewTuple([ <@@ 'b' @@>; <@@ 4 @@>; <@@ 5 @@>; <@@ 6 @@>; <@@ 7 @@>; <@@ 8 @@>; <@@ 9 @@>; <@@ 10 @@>])) <@@ ('b',4,5,6,7,8,9,10) @@>
+    check "vcknwwe011" (Expr.NewUnionCase(ucaseof <@@ Some(3) @@>,[ <@@ 4 @@> ])) <@@ Some(4) @@>
+    check "vcknwwe022" (Expr.NewUnionCase(ucaseof <@@ None @@>,[  ])) <@@ None @@>
+    check "vcknwwe033" (try let _ = Expr.NewUnionCase(ucaseof <@@ Some(3) @@>,[  ]) in false with :? ArgumentException -> true) true
+    check "vcknwwe044" (try let _ = Expr.NewUnionCase(ucaseof <@@ None @@>,[ <@@ 1 @@> ]) in false with :? ArgumentException -> true) true
+    check "vcknwwe055" (Expr.PropertyGet(getof <@@ System.DateTime.Now @@>,[  ])) <@@ System.DateTime.Now @@>
+    check "vcknwwe066" (try let _ = Expr.PropertyGet(getof <@@ System.DateTime.Now @@>,[ <@@ 1 @@> ]) in false with :? ArgumentException -> true) true
+    check "vcknwwe077" (Expr.PropertyGet(<@@ "3" @@>, getof <@@ "1".Length @@>)) <@@ "3".Length @@>
+    check "vcknwwe088" (Expr.PropertyGet(<@@ "3" @@>, getof <@@ "1".Length @@>,[  ])) <@@ "3".Length @@>
+#if !TESTS_AS_APP && !FX_PORTABLE_OR_NETSTANDARD
+    check "vcknwwe099" (Expr.PropertySet(<@@ (new System.Windows.Forms.Form()) @@>, setof <@@ (new System.Windows.Forms.Form()).Text <- "2" @@>, <@@ "3" @@> )) <@@ (new System.Windows.Forms.Form()).Text <- "3" @@>
+#endif
+    check "vcknwwe099" (Expr.PropertySet(<@@ (new Foo()) @@>, setof <@@ (new Foo()).[3] <- 1 @@>, <@@ 2 @@> , [ <@@ 3 @@> ] )) <@@ (new Foo()).[3] <- 2 @@>
+#if FSHARP_CORE_31
+#else
+    check "vcknwwe0qq1" (Expr.QuoteRaw(<@ "1" @>)) <@@ <@@ "1" @@> @@>
+    check "vcknwwe0qq2" (Expr.QuoteRaw(<@@ "1" @@>)) <@@ <@@ "1" @@> @@>
+    check "vcknwwe0qq3" (Expr.QuoteTyped(<@ "1" @>)) <@@ <@ "1" @> @@>
+    check "vcknwwe0qq4" (Expr.QuoteTyped(<@@ "1" @@>)) <@@ <@ "1" @> @@>
+#endif
+    check "vcknwwe0ww" (Expr.Sequential(<@@ () @@>, <@@ 1 @@>)) <@@ (); 1 @@>
+    check "vcknwwe0ee" (Expr.TryFinally(<@@ 1 @@>, <@@ () @@>)) <@@ try 1 finally () @@>
+    check "vcknwwe0rr" (match Expr.TryWith(<@@ 1 @@>, Var.Global("e1",typeof<exn>), <@@ 1 @@>, Var.Global("e2",typeof<exn>), <@@ 2 @@>) with TryWith(b,v1,ef,v2,eh) -> b = <@@ 1 @@> && eh = <@@ 2 @@> && ef = <@@ 1 @@> && v1 = Var.Global("e1",typeof<exn>) && v2 = Var.Global("e2",typeof<exn>)| _ -> false) true 
+    check "vcknwwe0tt" (match Expr.TupleGet(<@@ (1,2) @@>, 0) with TupleGet(b,n) -> b = <@@ (1,2) @@> && n = 0 | _ -> false) true 
+    check "vcknwwe0yy" (match Expr.TupleGet(<@@ (1,2) @@>, 1) with TupleGet(b,n) -> b = <@@ (1,2) @@> && n = 1 | _ -> false) true 
+    check "vcknwwe0uu" (try let _ = Expr.TupleGet(<@@ (1,2) @@>, 2) in false with :? ArgumentException -> true) true
+    check "vcknwwe0ii" (try let _ = Expr.TupleGet(<@@ (1,2) @@>, -1) in false with :? ArgumentException -> true) true
+    for i = 0 to 7 do 
+        check "vcknwwe0oo" (match Expr.TupleGet(<@@ (1,2,3,4,5,6,7,8) @@>, i) with TupleGet(b,n) -> b = <@@ (1,2,3,4,5,6,7,8) @@> && n = i | _ -> false) true 
+
+    check "vcknwwe0pp" (match Expr.TypeTest(<@@ new obj() @@>, typeof<string>) with TypeTest(e,ty) -> e = <@@ new obj() @@> && ty = typeof<string> | _ -> false) true
+    check "vcknwwe0aa" (match Expr.UnionCaseTest(<@@ [] : int list @@>, ucaseof <@@ [] : int list @@> ) with UnionCaseTest(e,uc) -> e = <@@ [] : int list @@> && uc = ucaseof <@@ [] : int list @@>  | _ -> false) true
+    check "vcknwwe0ss" (Expr.Value(3)) <@@ 3 @@>
+    check "vcknwwe0dd" (match Expr.Var(Var.Global("i",typeof<int>)) with Var(v) -> v = Var.Global("i",typeof<int>) | _ -> false) true
+    check "vcknwwe0ff" (match Expr.VarSet(Var.Global("i",typeof<int>), <@@ 4 @@>) with VarSet(v,q) -> v = Var.Global("i",typeof<int>) && q = <@@ 4 @@>  | _ -> false) true
+    check "vcknwwe0gg" (match Expr.WhileLoop(<@@ true @@>, <@@ () @@>) with WhileLoop(g,b) -> g = <@@ true @@> && b = <@@ () @@>  | _ -> false) true
+
+
+
 module QuotationStructUnionTests = 
 
     [<Struct>]
@@ -1906,8 +1985,7 @@ module TestQuotationOfCOnstructors =
                 
         | _ -> false)
 
-#if NetCore
-#else
+#if !FX_RESHAPED_REFLECTION
     // Also test getting the reflected definition for private members implied by "let f() = ..." bindings
     let fMethod = (typeof<MyClassWithAsLetMethod>.GetMethod("f", Reflection.BindingFlags.Instance ||| Reflection.BindingFlags.Public ||| Reflection.BindingFlags.NonPublic))
 
@@ -2203,7 +2281,7 @@ module ReflectedDefinitionOnTypesWithImplicitCodeGen =
    module M = 
       // This type has an implicit IComparable implementation, it is not accessible as a reflected definition
       type R = { x:int; y:string; z:System.DateTime }
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
       for m in typeof<R>.GetMethods() do 
 #else
       for m in typeof<R>.GetMethods(System.Reflection.BindingFlags.DeclaredOnly) do 
@@ -2212,7 +2290,7 @@ module ReflectedDefinitionOnTypesWithImplicitCodeGen =
 
       // This type has an implicit IComparable implementation, it is not accessible as a reflected definition
       type U = A of int | B of string | C of System.DateTime 
-#if NetCore
+#if FX_RESHAPED_REFLECTION
       for m in typeof<R>.GetMethods() do 
 #else
       for m in typeof<U>.GetMethods(System.Reflection.BindingFlags.DeclaredOnly) do 
@@ -2221,7 +2299,7 @@ module ReflectedDefinitionOnTypesWithImplicitCodeGen =
 
       // This type has some implicit codegen
       exception X of string * int
-#if NetCore
+#if FX_RESHAPED_REFLECTION
       for m in typeof<R>.GetMethods() do 
 #else
       for m in typeof<X>.GetMethods(System.Reflection.BindingFlags.DeclaredOnly) do 
@@ -2230,15 +2308,14 @@ module ReflectedDefinitionOnTypesWithImplicitCodeGen =
 
       // This type has an implicit IComparable implementation, it is not accessible as a reflected definition
       [<Struct>] type SR = { x:int; y:string; z:System.DateTime }
-#if NetCore
+#if FX_RESHAPED_REFLECTION
       for m in typeof<SR>.GetMethods() do 
 #else
       for m in typeof<SR>.GetMethods(System.Reflection.BindingFlags.DeclaredOnly) do 
 #endif
           check "celnwer35" (Quotations.Expr.TryGetReflectedDefinition(m).IsNone) true
 
-#if Portable
-#else
+#if !FX_PORTABLE_OR_NETSTANDARD
 module BasicUsingTEsts = 
     let q1() = 
       let a = ResizeArray<_>()
@@ -2410,8 +2487,7 @@ module QuotationOfResizeArrayIteration =
         
 
 
-#if FSHARP_CORE_31
-#else
+#if !FSHARP_CORE_31
 module TestAutoQuoteAtStaticMethodCalls = 
     open Microsoft.FSharp.Quotations
 
@@ -2718,11 +2794,334 @@ module ExtensionMembersWithSameName =
     runAll()
 #endif
 
+module PartialApplicationLeadToInvalidCodeWhenOptimized = 
+    let f () = 
+        let x = 1
+        let g (y:int) (z:int) = <@ x @>
+        let _ = g 3 // the closure generated by this code was invalid
+        ()
+
+    f ()
+
+
+/// TEST F# REFLECTION OVER THE IMPLEMENTATION OF SYMBOL TYPES FROM THE F# TYPE PROVIDER STARTER PACK
+///
+module ReflectionOverTypeInstantiations = 
+
+    open System.Collections.Generic
+
+    let notRequired opname item = 
+        let msg = sprintf "The operation '%s' on item '%s' should not be called on provided type, member or parameter" opname item
+        System.Diagnostics.Debug.Assert (false, msg)
+        raise (System.NotSupportedException msg)
+
+    /// DO NOT ADJUST THIS TYPE - it is the implementation of symbol types from the F# type provider starer pack. 
+    /// This code gets included in all F# type provider implementations. We expect F# reflection to be in a good, 
+    /// known state over these types.
+    ///
+    ///
+    /// Represents the type constructor in a provided symbol type.
+    [<NoComparison>]
+    type ProvidedSymbolKind = 
+        | SDArray 
+        | Array of int 
+        | Pointer 
+        | ByRef 
+        | Generic of System.Type 
+        | FSharpTypeAbbreviation of (System.Reflection.Assembly * string * string[])
+
+
+    /// DO NOT ADJUST THIS TYPE - it is the implementation of symbol types from the F# type provider starer pack. 
+    /// This code gets included in all F# type provider implementations. We expect F# reflection to be in a good, 
+    /// known state over these types.
+    ///
+    /// Represents an array or other symbolic type involving a provided type as the argument.
+    /// See the type provider spec for the methods that must be implemented.
+    /// Note that the type provider specification does not require us to implement pointer-equality for provided types.
+    type ProvidedSymbolType(kind: ProvidedSymbolKind, args: Type list, convToTgt: Type -> Type) =
+        inherit Type()
+
+        let rec isEquivalentTo (thisTy: Type) (otherTy: Type) =
+            match thisTy, otherTy with
+            | (:? ProvidedSymbolType as thisTy), (:? ProvidedSymbolType as thatTy) -> (thisTy.Kind,thisTy.Args) = (thatTy.Kind, thatTy.Args)
+            | (:? ProvidedSymbolType as thisTy), otherTy | otherTy, (:? ProvidedSymbolType as thisTy) ->
+                match thisTy.Kind, thisTy.Args with
+                | ProvidedSymbolKind.SDArray, [ty] | ProvidedSymbolKind.Array _, [ty] when otherTy.IsArray-> ty.Equals(otherTy.GetElementType())
+                | ProvidedSymbolKind.ByRef, [ty] when otherTy.IsByRef -> ty.Equals(otherTy.GetElementType())
+                | ProvidedSymbolKind.Pointer, [ty] when otherTy.IsPointer -> ty.Equals(otherTy.GetElementType())
+                | ProvidedSymbolKind.Generic baseTy, args -> otherTy.IsGenericType && isEquivalentTo baseTy (otherTy.GetGenericTypeDefinition()) && Seq.forall2 isEquivalentTo args (otherTy.GetGenericArguments())
+                | _ -> false
+            | a, b -> a.Equals b
+
+        let nameText() = 
+            match kind,args with 
+            | ProvidedSymbolKind.SDArray,[arg] -> arg.Name + "[]" 
+            | ProvidedSymbolKind.Array _,[arg] -> arg.Name + "[*]" 
+            | ProvidedSymbolKind.Pointer,[arg] -> arg.Name + "*" 
+            | ProvidedSymbolKind.ByRef,[arg] -> arg.Name + "&"
+            | ProvidedSymbolKind.Generic gty, args -> gty.Name + (sprintf "%A" args)
+            | ProvidedSymbolKind.FSharpTypeAbbreviation (_,_,path),_ -> path.[path.Length-1]
+            | _ -> failwith "unreachable"
+
+        /// Substitute types for type variables.
+        static member convType (parameters: Type list) (ty:Type) = 
+            if ty = null then null
+            elif ty.IsGenericType then
+                let args = Array.map (ProvidedSymbolType.convType parameters) (ty.GetGenericArguments())
+                ty.GetGenericTypeDefinition().MakeGenericType(args)  
+            elif ty.HasElementType then 
+                let ety = ProvidedSymbolType.convType parameters (ty.GetElementType()) 
+                if ty.IsArray then 
+                    let rank = ty.GetArrayRank()
+                    if rank = 1 then ety.MakeArrayType()
+                    else ety.MakeArrayType(rank)
+                elif ty.IsPointer then ety.MakePointerType()
+                elif ty.IsByRef then ety.MakeByRefType()
+                else ty
+            elif ty.IsGenericParameter then 
+                if ty.GenericParameterPosition <= parameters.Length - 1 then 
+                    parameters.[ty.GenericParameterPosition]
+                else
+                    ty
+            else ty
+
+        override __.FullName =   
+            match kind,args with 
+            | ProvidedSymbolKind.SDArray,[arg] -> arg.FullName + "[]" 
+            | ProvidedSymbolKind.Array _,[arg] -> arg.FullName + "[*]" 
+            | ProvidedSymbolKind.Pointer,[arg] -> arg.FullName + "*" 
+            | ProvidedSymbolKind.ByRef,[arg] -> arg.FullName + "&"
+            | ProvidedSymbolKind.Generic gty, args -> gty.FullName + "[" + (args |> List.map (fun arg -> arg.ToString()) |> String.concat ",") + "]"
+            | ProvidedSymbolKind.FSharpTypeAbbreviation (_,nsp,path),args -> String.concat "." (Array.append [| nsp |] path) + (match args with [] -> "" | _ -> args.ToString())
+            | _ -> failwith "unreachable"
+   
+        /// Although not strictly required by the type provider specification, this is required when doing basic operations like FullName on
+        /// .NET symbolic types made from this type, e.g. when building Nullable<SomeProvidedType[]>.FullName
+        override __.DeclaringType =                                                                 
+            match kind,args with 
+            | ProvidedSymbolKind.SDArray,[arg] -> arg
+            | ProvidedSymbolKind.Array _,[arg] -> arg
+            | ProvidedSymbolKind.Pointer,[arg] -> arg
+            | ProvidedSymbolKind.ByRef,[arg] -> arg
+            | ProvidedSymbolKind.Generic gty,_ -> gty
+            | ProvidedSymbolKind.FSharpTypeAbbreviation _,_ -> null
+            | _ -> failwith "unreachable"
+
+        override __.IsAssignableFrom(otherTy) = 
+            match kind with
+            | Generic gtd ->
+                if otherTy.IsGenericType then
+                    let otherGtd = otherTy.GetGenericTypeDefinition()
+                    let otherArgs = otherTy.GetGenericArguments()
+                    let yes = gtd.Equals(otherGtd) && Seq.forall2 isEquivalentTo args otherArgs
+                    yes
+                    else
+                        base.IsAssignableFrom(otherTy)
+            | _ -> base.IsAssignableFrom(otherTy)
+
+        override __.Name = nameText()
+
+        override __.BaseType =
+            match kind with 
+            | ProvidedSymbolKind.SDArray -> convToTgt typeof<System.Array> 
+            | ProvidedSymbolKind.Array _ -> convToTgt typeof<System.Array> 
+            | ProvidedSymbolKind.Pointer -> convToTgt typeof<System.ValueType> 
+            | ProvidedSymbolKind.ByRef -> convToTgt typeof<System.ValueType> 
+            | ProvidedSymbolKind.Generic gty  ->
+                if gty.BaseType = null then null else
+                ProvidedSymbolType.convType args gty.BaseType
+            | ProvidedSymbolKind.FSharpTypeAbbreviation _ -> convToTgt typeof<obj>  
+
+        override __.GetArrayRank() = (match kind with ProvidedSymbolKind.Array n -> n | ProvidedSymbolKind.SDArray -> 1 | _ -> invalidOp "non-array type")
+        override __.IsValueTypeImpl() = (match kind with ProvidedSymbolKind.Generic gtd -> gtd.IsValueType | _ -> false)
+        override __.IsArrayImpl() = (match kind with ProvidedSymbolKind.Array _ | ProvidedSymbolKind.SDArray -> true | _ -> false)
+        override __.IsByRefImpl() = (match kind with ProvidedSymbolKind.ByRef _ -> true | _ -> false)
+        override __.IsPointerImpl() = (match kind with ProvidedSymbolKind.Pointer _ -> true | _ -> false)
+        override __.IsPrimitiveImpl() = false
+        override __.IsGenericType = (match kind with ProvidedSymbolKind.Generic _ -> true | _ -> false)
+        override __.GetGenericArguments() = (match kind with ProvidedSymbolKind.Generic _ -> args |> List.toArray | _ -> invalidOp "non-generic type")
+        override __.GetGenericTypeDefinition() = (match kind with ProvidedSymbolKind.Generic e -> e | _ -> invalidOp "non-generic type")
+        override __.IsCOMObjectImpl() = false
+        override __.HasElementTypeImpl() = (match kind with ProvidedSymbolKind.Generic _ -> false | _ -> true)
+        override __.GetElementType() = (match kind,args with (ProvidedSymbolKind.Array _  | ProvidedSymbolKind.SDArray | ProvidedSymbolKind.ByRef | ProvidedSymbolKind.Pointer),[e] -> e | _ -> invalidOp "not an array, pointer or byref type")
+        override this.ToString() = this.FullName
+
+        override __.Assembly = 
+            match kind with 
+            | ProvidedSymbolKind.FSharpTypeAbbreviation (assembly,_nsp,_path) -> assembly
+            | ProvidedSymbolKind.Generic gty -> gty.Assembly
+            | _ -> notRequired "Assembly" (nameText())
+
+        override __.Namespace = 
+            match kind with 
+            | ProvidedSymbolKind.FSharpTypeAbbreviation (_assembly,nsp,_path) -> nsp
+            | _ -> notRequired "Namespace" (nameText())
+
+        override __.GetHashCode()                                                                    = 
+            match kind,args with 
+            | ProvidedSymbolKind.SDArray,[arg] -> 10 + hash arg
+            | ProvidedSymbolKind.Array _,[arg] -> 163 + hash arg
+            | ProvidedSymbolKind.Pointer,[arg] -> 283 + hash arg
+            | ProvidedSymbolKind.ByRef,[arg] -> 43904 + hash arg
+            | ProvidedSymbolKind.Generic gty,_ -> 9797 + hash gty + List.sumBy hash args
+            | ProvidedSymbolKind.FSharpTypeAbbreviation _,_ -> 3092
+            | _ -> failwith "unreachable"
+    
+        override __.Equals(other: obj) =
+            match other with
+            | :? ProvidedSymbolType as otherTy -> (kind, args) = (otherTy.Kind, otherTy.Args)
+            | _ -> false
+
+        member __.Kind = kind
+        member __.Args = args
+    
+        member __.IsFSharpTypeAbbreviation  = match kind with FSharpTypeAbbreviation _ -> true | _ -> false
+        // For example, int<kg>
+        member __.IsFSharpUnitAnnotated = match kind with ProvidedSymbolKind.Generic gtd -> not gtd.IsGenericTypeDefinition | _ -> false
+
+        override __.Module : Module                                                                   = notRequired "Module" (nameText())
+        override __.GetConstructors _bindingAttr                                                      = notRequired "GetConstructors" (nameText())
+        override __.GetMethodImpl(_name, _bindingAttr, _binderBinder, _callConvention, _types, _modifiers) = 
+            match kind with
+            | Generic gtd -> 
+                let ty = gtd.GetGenericTypeDefinition().MakeGenericType(Array.ofList args)
+                ty.GetMethod(_name, _bindingAttr)
+            | _ -> notRequired "GetMethodImpl" (nameText())
+        override __.GetMembers _bindingAttr                                                           = notRequired "GetMembers" (nameText())
+        override __.GetMethods _bindingAttr                                                           = notRequired "GetMethods" (nameText())
+        override __.GetField(_name, _bindingAttr)                                                     = notRequired "GetField" (nameText())
+        override __.GetFields _bindingAttr                                                            = notRequired "GetFields" (nameText())
+        override __.GetInterface(_name, _ignoreCase)                                                  = notRequired "GetInterface" (nameText())
+        override __.GetInterfaces()                                                                   = notRequired "GetInterfaces" (nameText())
+        override __.GetEvent(_name, _bindingAttr)                                                     = notRequired "GetEvent" (nameText())
+        override __.GetEvents _bindingAttr                                                            = notRequired "GetEvents" (nameText())
+        override __.GetProperties _bindingAttr                                                        = notRequired "GetProperties" (nameText())
+        override __.GetPropertyImpl(_name, _bindingAttr, _binder, _returnType, _types, _modifiers)    = notRequired "GetPropertyImpl" (nameText())
+        override __.GetNestedTypes _bindingAttr                                                       = notRequired "GetNestedTypes" (nameText())
+        override __.GetNestedType(_name, _bindingAttr)                                                = notRequired "GetNestedType" (nameText())
+        override __.GetAttributeFlagsImpl()                                                           = notRequired "GetAttributeFlagsImpl" (nameText())
+        override this.UnderlyingSystemType = 
+            match kind with 
+            | ProvidedSymbolKind.SDArray
+            | ProvidedSymbolKind.Array _
+            | ProvidedSymbolKind.Pointer
+            | ProvidedSymbolKind.FSharpTypeAbbreviation _
+            | ProvidedSymbolKind.ByRef -> upcast this
+            | ProvidedSymbolKind.Generic gty -> gty.UnderlyingSystemType  
+    #if FX_NO_CUSTOMATTRIBUTEDATA
+    #else
+        override __.GetCustomAttributesData()                                                        =  ([| |] :> IList<_>)
+    #endif
+        override __.MemberType                                                                       = notRequired "MemberType" (nameText())
+        override __.GetMember(_name,_mt,_bindingAttr)                                                = notRequired "GetMember" (nameText())
+        override __.GUID                                                                             = notRequired "GUID" (nameText())
+        override __.InvokeMember(_name, _invokeAttr, _binder, _target, _args, _modifiers, _culture, _namedParameters) = notRequired "InvokeMember" (nameText())
+        override __.AssemblyQualifiedName                                                            = notRequired "AssemblyQualifiedName" (nameText())
+        override __.GetConstructorImpl(_bindingAttr, _binder, _callConvention, _types, _modifiers)   = notRequired "GetConstructorImpl" (nameText())
+        override __.GetCustomAttributes(_inherit)                                                    = [| |]
+        override __.GetCustomAttributes(_attributeType, _inherit)                                    = [| |]
+        override __.IsDefined(_attributeType, _inherit)                                              = false
+        // FSharp.Data addition: this was added to support arrays of arrays
+        override this.MakeArrayType() = ProvidedSymbolType(ProvidedSymbolKind.SDArray, [this], convToTgt) :> Type
+        override this.MakeArrayType arg = ProvidedSymbolType(ProvidedSymbolKind.Array arg, [this], convToTgt) :> Type
+
+
+
+    /// DO NOT ADJUST THIS TYPE - it is the implementation of symbol types from the F# type provider starer pack. 
+    /// This code gets included in all F# type provider implementations. We expect F# reflection to be in a good, 
+    /// known state over these types.
+    type ProvidedTypeBuilder() =
+        static member MakeGenericType(genericTypeDefinition, genericArguments) = ProvidedSymbolType(Generic genericTypeDefinition, genericArguments, id) :> Type
+    
+
+    /// TEST BEGINS HERE
+    //
+    let checkType nm (ty:System.Type) isTup = 
+        // Calls to basic properties are in a known state
+        check (nm + "-falihksec0 - expect IsArray to give accurate results on typical F# type provider implementation of TypeBuilderInstantiation") (try ty.IsArray |> Some with e -> None) (Some false)
+        check (nm + "-falihksec1 - expect IsPointer to give accurate results on typical F# type provider implementation of TypeBuilderInstantiation") (try ty.IsPointer |> Some with e -> None) (Some false)
+        check (nm + "-falihksec2 - expect IsAbstract to give accurate results on typical F# type provider implementation of TypeBuilderInstantiation") (try ty.IsAbstract |> Some with e -> None) (Some false)
+        check (nm + "-falihksec3 - expect IsClass to give accurate results on typical F# type provider implementation of TypeBuilderInstantiation") (try ty.IsClass |> Some with e -> None) (Some true)
+        check (nm + "-falihksec4 - expect IsValueType to give accurate results on typical F# type provider implementation of TypeBuilderInstantiation") (try ty.IsValueType |> Some with e -> None) (Some false)
+        check (nm + "-falihksec5 - expect IsTuple to give accurate results on typical F# type provider implementation of TypeBuilderInstantiation") (try Reflection.FSharpType.IsTuple(ty) |> Some with _ -> None) (Some isTup)
+
+#if !MONO
+        check (nm + "-falihksec3a - currently expect IsEnum to throw on typical F# type provider implementation of TypeBuilderInstantiation") (try ty.IsEnum |> ignore; 100 with e -> 200) 200
+        check (nm + "-falihksec4a - currently expect FullName to throw on typical F# type provider implementation of TypeBuilderInstantiation") (try ty.FullName |> ignore; 100 with e -> 200) 200
+        check (nm + "-falihksec5a - currently expect IsFunction to throw on typical F# type provider implementation of TypeBuilderInstantiation") (try Reflection.FSharpType.IsFunction(ty) |> ignore; 100 with _ -> 200) 200
+        check (nm + "-falihksec6a - currently expect IsUnion to throw on typical F# type provider implementation of TypeBuilderInstantiation") (try Reflection.FSharpType.IsUnion(ty) |> ignore; 100 with :? System.NotSupportedException -> 200) 200
+        check (nm + "-falihksec7a - currently expect IsRecord to throw on typical F# type provider implementation of TypeBuilderInstantiation") (try Reflection.FSharpType.IsRecord (ty) |> ignore; 100 with :? System.NotSupportedException -> 200) 200
+        check (nm + "-falihksec8a - currently expect IsModule to throw on typical F# type provider implementation of TypeBuilderInstantiation") (try Reflection.FSharpType.IsModule (ty) |> ignore; 100 with :? System.NotSupportedException -> 200) 200
+#endif
+
+    // This makes a TypeBuilderInstantiation type, because a real type has been instantiated with a non-real type
+    let t0 = ProvidedTypeBuilder.MakeGenericType(typedefof<list<_>>, [ typeof<int> ])
+    let t1 = typedefof<list<_>>.MakeGenericType(t0)
+    let t2 = typedefof<int * int>.MakeGenericType(t0, t0)
+
+    checkType "test cvweler8" t1 false
+    checkType "test cvweler9" t2 true
+
+module QuotationStructTupleTests = 
+    let actual = struct (0,0)
+    let code = 
+        <@ match actual with
+           | struct (0,0) -> true
+           | _ -> false @>
+
+    printfn "code = %A" code
+    check "wcelwec" (match code with 
+                     | IfThenElse (Call (None, _, [TupleGet (PropertyGet (None, _, []), 0); _]), IfThenElse (Call (None, _, [TupleGet (PropertyGet (None, _, []), 1); _]), Value _, Value _), Value _) -> true
+                     | _ -> false)
+         true
+
+    for i = 0 to 7 do 
+        check "vcknwwe0oo" (match Expr.TupleGet(<@@ struct (1,2,3,4,5,6,7,8) @@>, i) with TupleGet(b,n) -> b = <@@ struct (1,2,3,4,5,6,7,8) @@> && n = i | _ -> false) true 
+
+    let actual2 : Result<string, string> = Ok "foo"
+    let code2 = 
+        <@ match actual2 with
+           | Ok _ -> true
+           | Error _ -> false @>
+
+    printfn "code2 = %A" code2
+    check "cewcewwer" 
+         (match code2 with 
+            | IfThenElse (UnionCaseTest (PropertyGet (None, actual2, []), _), Value _, Value _) -> true
+            | _ -> false)
+         true
+
+
+module TestStaticCtor = 
+    [<ReflectedDefinition>]
+    type T() =
+        static do printfn "Hello" // removing this makes the RD lookup work
+        static member Ident (x:int) = x
+
+    let testStaticCtor() = 
+        // bug: threw error with message "Could not bind to method" 
+        check "cvwenklwevpo1" (Expr.TryGetReflectedDefinition(typeof<T>.GetMethod("Ident"))).IsSome true
+        check "cvwenklwevpo2" (Expr.TryGetReflectedDefinition(typeof<T>.GetConstructors(BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic).[0])).IsSome true
+
+    testStaticCtor()
+
+
+#if !FX_RESHAPED_REFLECTION
 module TestAssemblyAttributes = 
     let attributes = System.Reflection.Assembly.GetExecutingAssembly().GetCustomAttributes(false)
+#endif
 
+#if TESTS_AS_APP
+let RUN() = !failures
+#else
 let aa =
-  if not failures.IsEmpty then (printfn "Test Failed, failures = %A" failures; exit 1) 
-  else (stdout.WriteLine "Test Passed"; 
-        System.IO.File.WriteAllText("test.ok","ok"); 
-        exit 0)
+  match !failures with 
+  | [] -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
+#endif
+

@@ -2,8 +2,6 @@
 
 namespace Microsoft.FSharp.Linq
 
-#if QUERIES_IN_FSLIB
-
 open System
 open System.Linq
 open System.Collections
@@ -236,8 +234,7 @@ open System.Collections
 open System.Collections.Generic
 open System.Linq.Expressions
 open System.Reflection
-#if FX_NO_REFLECTION_EMIT
-#else
+#if !FX_NO_REFLECTION_EMIT
 open System.Reflection.Emit
 #endif
 open Microsoft.FSharp
@@ -463,7 +460,7 @@ module Query =
         MakeOrCallMinByOrMaxBy FQ FE
 
     let MakeMinByNullable, CallMinByNullable =  
-        // Note there is no sepaate LINQ overload for Min on nullables - the one implementation just magically skips nullable elements
+        // Note there is no separate LINQ overload for Min on nullables - the one implementation just magically skips nullable elements
         let FQ = methodhandleof (fun (x,y:Expression<Func<_,_>>) -> System.Linq.Queryable.Min(x, y))
         let FE = methodhandleof (fun (x,y:Func<_,'Result>) -> System.Linq.Enumerable.Min(x, y))
         MakeOrCallMinByOrMaxBy FQ FE
@@ -793,7 +790,7 @@ module Query =
         let FE = MakeGenericStaticMethod (methodhandleof (fun (x,y:Func<_,_>) -> System.Linq.Enumerable.ThenByDescending(x,y)))
         MakeOrderByOrThenBy FQ FE
 
-    // The keyItemTy differntiates these
+    // The keyItemTy differentiates these
     let MakeOrderByNullable = MakeOrderBy
     let MakeOrderByNullableDescending = MakeOrderByDescending
     let MakeThenByNullable = MakeThenBy
@@ -1483,7 +1480,7 @@ module Query =
                 let tyArg = replNestedQuery.Type.GetGenericArguments().[0]
                 let IQueryableTySpec = MakeIQueryableTy tyArg
                 // if result type of nested query is derived from IQueryable but not IQueryable itself (i.e. IOrderedQueryable) 
-                // then add coersion to IQueryable so result type will match expected signature of QuerySource.Run
+                // then add coercion to IQueryable so result type will match expected signature of QuerySource.Run
                 if (IQueryableTySpec.IsAssignableFrom replNestedQuery.Type) && not (IQueryableTySpec.Equals replNestedQuery.Type) then
                     Expr.Coerce(replNestedQuery, IQueryableTySpec)
                 else
@@ -1664,8 +1661,7 @@ module Query =
         let linqQuery = TransInnerWithFinalConsume canElim queryProducingSequence
         let linqQueryAfterEliminatingNestedQueries = EliminateNestedQueries linqQuery 
 
-#if FX_NO_SYSTEM_CONSOLE
-#else    
+#if !FX_NO_SYSTEM_CONSOLE
 #if DEBUG
         let debug() = 
               Printf.printfn "----------------------queryProducingSequence-------------------------" 
@@ -1682,8 +1678,7 @@ module Query =
            try 
               LeafExpressionConverter.EvaluateQuotation linqQueryAfterEliminatingNestedQueries
            with e -> 
-#if FX_NO_SYSTEM_CONSOLE
-#else    
+#if !FX_NO_SYSTEM_CONSOLE
 #if DEBUG
               debug()
               Printf.printfn "--------------------------error--------------------------------------" 
@@ -1728,7 +1723,7 @@ module Query =
         | source -> EvalNonNestedInner canElim source 
 
     let QueryExecute (p : Expr<'T>) : 'U =  
-        // We use Unchecked.unbox to allow headOrDefault, lastOrDefault and exactlyOneOrDefault to return Uncehcked.defaultof<_> values for F# types
+        // We use Unchecked.unbox to allow headOrDefault, lastOrDefault and exactlyOneOrDefault to return Unchecked.defaultof<_> values for F# types
         Unchecked.unbox (EvalNonNestedOuter CanEliminate.No p)
 
     do ForwardDeclarations.Query <-
@@ -1738,5 +1733,4 @@ module Query =
                 member this.EliminateNestedQueries(e) = EliminateNestedQueries e
         }
     
-#endif
 

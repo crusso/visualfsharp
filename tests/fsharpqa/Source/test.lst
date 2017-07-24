@@ -18,12 +18,12 @@ CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\MethodImplAttribute
 CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\Misc
 CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\Mutation
 CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\Operators
-CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\QueryExpressionStepping
-CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\SeqExpressionStepping
+Retry,CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\QueryExpressionStepping
+Retry,CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\SeqExpressionStepping
 CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\SeqExpressionTailCalls
 CodeGen01,NoMT,CodeGen,NoHostedCompiler,SerializableAttribute				CodeGen\EmittedIL\SerializableAttribute
 CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\StaticInit
-CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\SteppingMatch
+Retry,CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\SteppingMatch
 CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\TailCalls
 CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\TestFunctions
 CodeGen01,NoMT,CodeGen				CodeGen\EmittedIL\Tuples
@@ -46,7 +46,7 @@ CompilerOptions01,NoMT				CompilerOptions\fsc\noframework
 CompilerOptions01,NoMT				CompilerOptions\fsc\nologo
 CompilerOptions01,NoMT				CompilerOptions\fsc\optimize
 CompilerOptions01,NoMT				CompilerOptions\fsc\out
-CompilerOptions01,NoMT				CompilerOptions\fsc\pdb
+CompilerOptions01,NoMT,pdbs				CompilerOptions\fsc\pdb
 CompilerOptions01,NoMT				CompilerOptions\fsc\platform
 CompilerOptions01,NoMT				CompilerOptions\fsc\reference
 CompilerOptions01,NoMT				CompilerOptions\fsc\Removed
@@ -66,6 +66,7 @@ CompilerOptions01,NoMT				CompilerOptions\fsi\nologo
 CompilerOptions01,NoMT				CompilerOptions\fsi\subsystemversion
 CompilerOptions01,NoMT				CompilerOptions\fsi\times
 CompilerOptions02,NoMT				CompilerOptions\fsi\exename
+CompilerOptions01,NoMT,Determinism				CompilerOptions\fsc\determinism
 
 
 Conformance01			Conformance\BasicGrammarElements\Constants
@@ -105,6 +106,7 @@ Conformance02			Conformance\DeclarationElements\MemberDefinitions\ImplementingDi
 Conformance02			Conformance\DeclarationElements\MemberDefinitions\MethodsAndProperties
 Conformance02			Conformance\DeclarationElements\MemberDefinitions\NamedArguments
 Conformance02			Conformance\DeclarationElements\MemberDefinitions\OptionalArguments
+Conformance02			Conformance\DeclarationElements\MemberDefinitions\OptionalDefaultParameterValueArguments
 Conformance02			Conformance\DeclarationElements\MemberDefinitions\OverloadingMembers
 Conformance02			Conformance\DeclarationElements\ModuleAbbreviations
 Conformance02			Conformance\DeclarationElements\ObjectConstructors
@@ -250,6 +252,7 @@ Misc01			Globalization
 Misc01,NoMT		Import
 Misc01,NoMT		..\..\..\testsprivate\fsharpqa\Source\InteractiveSession\AssemblyLoading
 Misc01,NoMT		InteractiveSession\Misc
+Misc01,NoMT		InteractiveSession\Misc\GenericConstraintWoes\issue2411
 Misc01			Libraries\Control
 Misc01			Libraries\Core\collections
 Misc01			Libraries\Core\ExtraTopLevelOperators
@@ -260,6 +263,8 @@ Misc01			Libraries\Core\Reflection
 Misc01			Libraries\Core\Unchecked
 Misc01			Warnings
 Misc01			ErrorMessages\NameResolution
+Misc01			ErrorMessages\UnitGenericAbstractType
+Misc01			ErrorMessages\ConfusingTypeName
 
 Misc02			Libraries\Portable
 Misc02			Misc

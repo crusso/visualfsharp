@@ -1,26 +1,20 @@
 // #Conformance #Regression #Collections 
-#if Portable
+#if TESTS_AS_APP
 module Core_map
 #endif
 
 #light
-let failures = ref false
-let report_failure () = failures := true
-let test s b = if b then stdout.WriteLine ("OK: "+s) else (stdout.WriteLine (" FAILED: "+s); report_failure() )
+let failures = ref []
 
-#if NetCore
-#else
-let argv = System.Environment.GetCommandLineArgs() 
-let SetCulture() = 
-  if argv.Length > 2 && argv.[1] = "--culture" then  begin
-    let cultureString = argv.[2] in 
-    let culture = new System.Globalization.CultureInfo(cultureString) in 
-    stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-    System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
-  end 
-  
-do SetCulture()    
-#endif
+let report_failure (s : string) = 
+    stderr.Write" NO: "
+    stderr.WriteLine s
+    failures := !failures @ [s]
+
+let test (s : string) b = 
+    stderr.Write(s)
+    if b then stderr.WriteLine " OK"
+    else report_failure (s)
 
 (* TEST SUITE FOR STANDARD LIBRARY *)
   
@@ -165,8 +159,18 @@ module Bug_FSharp_1_0_6307 =
     // below does not parse
     let t = typeof<global.System.Int32>
 
+
+#if TESTS_AS_APP
+let RUN() = !failures
+#else
 let aa =
-  if !failures then (stdout.WriteLine "Test Failed"; exit 1) 
-  else (stdout.WriteLine "Test Passed"; 
-        System.IO.File.WriteAllText("test.ok","ok"); 
-        exit 0)
+  match !failures with 
+  | [] -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
+#endif
+

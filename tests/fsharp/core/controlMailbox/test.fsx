@@ -1,12 +1,12 @@
 // #Regression #Conformance #ComputationExpressions #Async #Regression #Events #Stress 
-#if Portable
+#if TESTS_AS_APP
 module Core_controlMailBox
 #endif
 #light
 
 #nowarn "40" // recursive references
 
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
 open System.Threading.Tasks
 #endif
 
@@ -31,8 +31,7 @@ let report_failure s =
      log (sprintf "FAILURE: %s failed" s)
   )
 
-#if Portable
-#else
+#if !FX_PORTABLE_OR_NETSTANDARD
 System.AppDomain.CurrentDomain.UnhandledException.AddHandler(
        fun _ (args:System.UnhandledExceptionEventArgs) ->
           lock syncObj (fun () ->
@@ -53,20 +52,6 @@ let checkQuiet s x1 x2 =
 let check s x1 x2 = 
     if x1 = x2 then test s true
     else (test s false; log (sprintf "expected: %A, got %A" x2 x1))
-
-#if NetCore
-#else
-let argv = System.Environment.GetCommandLineArgs() 
-let SetCulture() = 
-  if argv.Length > 2 && argv.[1] = "--culture" then  begin
-    let cultureString = argv.[2] in 
-    let culture = new System.Globalization.CultureInfo(cultureString) in 
-    stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-    System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
-  end 
-  
-do SetCulture()    
-#endif
 
 open Microsoft.FSharp.Control
 open Microsoft.FSharp.Control.WebExtensions
@@ -225,7 +210,7 @@ module MailboxProcessorBasicTests =
                  while !received < n do
                      if !received % 100 = 0 then 
                          printfn "received = %d" !received
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
                      Task.Delay(1).Wait()
 #else
                      System.Threading.Thread.Sleep(1)
@@ -248,7 +233,7 @@ module MailboxProcessorBasicTests =
                                 | Some _ -> do incr received })
                  mb1.Start();
                  for i in 0 .. n-1 do
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
                      Task.Delay(1).Wait();
 #else
                      System.Threading.Thread.Sleep(1)
@@ -257,7 +242,7 @@ module MailboxProcessorBasicTests =
                  while !received < n do
                      if !received % 100 = 0 then 
                          printfn "main thread: received = %d" !received
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
                      Task.Delay(1).Wait();
 #else
                      System.Threading.Thread.Sleep(1)
@@ -290,7 +275,7 @@ module MailboxProcessorBasicTests =
                         w.Start()
                         while w.ElapsedMilliseconds < 1000L && (!timedOut).IsNone do
                             mb.Post(-1)
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
                             Task.Delay(1).Wait();
 #else
                             System.Threading.Thread.Sleep(1)
@@ -313,7 +298,7 @@ module MailboxProcessorBasicTests =
             w.Start()
             while w.ElapsedMilliseconds < 100L do
                 mb.Post(false)
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
                 Task.Delay(0).Wait();
 #else
                 System.Threading.Thread.Sleep(0)
@@ -322,7 +307,6 @@ module MailboxProcessorBasicTests =
             mb.Post(true)
             r)
             None
-    test()
 
 module MailboxProcessorErrorEventTests =
     exception Err of int
@@ -334,7 +318,7 @@ module MailboxProcessorErrorEventTests =
              let res = ref 100
              mb1.Error.Add(fun _ -> res := 0)
              mb1.Start();
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
              Task.Delay(200).Wait();
 #else
              System.Threading.Thread.Sleep(200)
@@ -349,7 +333,7 @@ module MailboxProcessorErrorEventTests =
              let res = ref 0
              mb1.Error.Add(fun _ -> res := 100)
              mb1.Start();
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
              Task.Delay(200).Wait();
 #else
              System.Threading.Thread.Sleep(200)
@@ -367,14 +351,13 @@ module MailboxProcessorErrorEventTests =
              mb1.Error.Add(function Err n -> res := n | _ -> check "rwe90r - unexpected error" 0 1)
              mb1.Start();
              mb1.Post 100
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
              Task.Delay(200).Wait();
 #else
              System.Threading.Thread.Sleep(200)
 #endif
              !res)
             100
-    test()
         
 type msg = Increment of int | Fetch of AsyncReplyChannel<int> | Reset
 let mailboxes() = new MailboxProcessor<msg>(fun inbox ->
@@ -490,7 +473,7 @@ let test7() =
 
 let timeoutboxes str = new MailboxProcessor<'b>(fun inbox ->
     async { for i in 1 .. 10 do
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
                 Task.Delay(200).Wait()
 #else
                 do System.Threading.Thread.Sleep 200
@@ -578,22 +561,6 @@ type Path(str) =
                        current <- n
 
 
-test5()
-test6()
-timeout_para()
-timeout_par()
-timeout_para_def()
-timeout_par_def()
-timeout_tpara()
-timeout_tpar()
-timeout_tpara_def()
-timeout_tpar_def()
-// ToDo: 7/31/2008: Disabled because of probable timing issue.  QA needs to re-enable post-CTP.
-// Tracked by bug FSharp 1.0:2891
-//test15()
-// ToDo: 7/31/2008: Disabled because of probable timing issue.  QA needs to re-enable post-CTP.
-// Tracked by bug FSharp 1.0:2891
-//test15b()
 
 module LotsOfMessages = 
     let test () =
@@ -619,25 +586,44 @@ module LotsOfMessages =
             check "celrv09ervkn" (queueLength >= logger.CurrentQueueLength) true
             queueLength <- logger.CurrentQueueLength 
     
-#if NetCore
+#if FX_PORTABLE_OR_NETSTANDARD
             Task.Delay(10).Wait()
 #else
             System.Threading.Thread.Sleep(10)
 #endif
         check "celrv09ervknf3ew" logger.CurrentQueueLength 0
-    test()
 
-#if Portable
-let aa = if not failures.IsEmpty then exit 1 else stdout.WriteLine "Test Passed"; exit 0
+let RunAll() = 
+    MailboxProcessorBasicTests.test()
+    MailboxProcessorErrorEventTests.test()
+    test5()
+    test6()
+    timeout_para()
+    timeout_par()
+    timeout_para_def()
+    timeout_par_def()
+    timeout_tpara()
+    timeout_tpar()
+    timeout_tpara_def()
+    timeout_tpar_def()
+    // ToDo: 7/31/2008: Disabled because of probable timing issue.  QA needs to re-enable post-CTP.
+    // Tracked by bug FSharp 1.0:2891
+    //test15()
+    // ToDo: 7/31/2008: Disabled because of probable timing issue.  QA needs to re-enable post-CTP.
+    // Tracked by bug FSharp 1.0:2891
+    //test15b()
+    LotsOfMessages.test()
+
+#if TESTS_AS_APP
+let RUN() = RunAll(); failures
 #else
-let _ = 
-  if not failures.IsEmpty then (stdout.WriteLine("Test Failed, failures = {0}", failures); exit 1) 
-  else (stdout.WriteLine "Test Passed"; 
-        System.IO.File.WriteAllText("test.ok","ok"); 
-// debug: why is the fsi test failing?  is it because test.ok does not exist?
-        if System.IO.File.Exists("test.ok") then
-            stdout.WriteLine ("test.ok found at {0}", System.IO.FileInfo("test.ok").FullName)
-        else
-            stdout.WriteLine ("test.ok not found")
-        exit 0)
+RunAll()
+let aa =
+  if not failures.IsEmpty then 
+      stdout.WriteLine "Test Failed"
+      exit 1
+  else   
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
 #endif

@@ -29,16 +29,14 @@ let AssertContainsInOrder(s:string,cs:string list) =
         | expect :: expects ->
             let index = s.IndexOf((expect:string),(fromIndex:int))           
             if index = -1 then
-              Assert.Fail(sprintf "Expected:\n%s\n\nto contain:\n%s\n\nafter index: %d." s expect fromIndex)
+               Assert.Fail(sprintf "Expected:\n%s\n\nto contain:\n%s\n\nafter index: %d." s expect fromIndex)
             else
                printfn "At index %d seen '%s'." index expect
             containsInOrderFrom index expects
     containsInOrderFrom 0 cs
     
-let AssertContains(s:string,c) =
-    if not (s.Contains(c)) then
-        printf "Expected:\n%s\n\nto contain:\n%s" s c
-        Assert.Fail()
+let AssertContains(value: string, substring: string) =
+    Assert.That(value, Contains.Substring substring)
         
 let AssertArrayContainsPartialMatchOf(a:string array,c) =
     let found = ref false

@@ -2,23 +2,19 @@
 module Test2
 #nowarn "44"
 
+let failures = ref []
+
+let report_failure (s : string) = 
+    stderr.Write" NO: "
+    stderr.WriteLine s
+    failures := !failures @ [s]
+
+let test (s : string) b = 
+    stderr.Write(s)
+    if b then stderr.WriteLine " OK"
+    else report_failure (s)
+
 open System.Reflection
-
-let failures = ref false
-let report_failure () = 
-  stderr.WriteLine " NO"; failures := true
-let test s b = stderr.Write(s:string);  if b then stderr.WriteLine " OK" else report_failure() 
-
-let argv = System.Environment.GetCommandLineArgs() 
-let SetCulture() = 
-  if argv.Length > 2 && argv.[1] = "--culture" then  begin
-    let cultureString = argv.[2] in 
-    let culture = new System.Globalization.CultureInfo(cultureString) in 
-    stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-    System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
-  end 
-  
-do SetCulture()    
 
 (* TEST SUITE FOR Microsoft.FSharp.Reflection *)
 
@@ -34,7 +30,7 @@ module NewTests =
     let (|String|_|) (v:obj) = match v with :? string as s -> Some(s) | _ -> None
     let (|Int|_|) (v:obj) = match v with :? int as s -> Some(s) | _ -> None
     let showAll = 
-#if CoreClr
+#if NETSTANDARD1_6
         true
 #else
         System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.NonPublic 
@@ -264,7 +260,7 @@ module TwoCasedUnionWithNullAsTrueValueAnnotation =
         with _ -> false
     test "TwoCasedUnionWithNullAsTrueValueAnnotation" result
 
-module TEst = begin
+module TEst = 
 
   type token = 
    | X
@@ -303,13 +299,19 @@ module TEst = begin
   let _ = printany (1,true,2.4,"a tuple",("nested",(fun () -> ()),[2;3],rrv))
   let _ = printany printany (* =) *)
 
-end
 
 
-let _ = 
-  if !failures then (stdout.WriteLine "Test Failed"; exit 1) 
-  else (stdout.WriteLine "Test Passed"; 
-        System.IO.File.WriteAllText("test.ok","ok"); 
-        exit 0)
-
+#if TESTS_AS_APP
+let RUN() = !failures
+#else
+let aa =
+  match !failures with 
+  | [] -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
+#endif
 

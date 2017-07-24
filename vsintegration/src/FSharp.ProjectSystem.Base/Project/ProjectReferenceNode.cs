@@ -27,7 +27,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         /// Containes either null if project reference is OK or instance of Task with error message if project reference is invalid
         /// i.e. project A references project B when target framework version for B is higher that for A
         /// </summary>
-        private Task projectRefError;
+        private Shell.Task projectRefError;
 
         /// <summary>
         /// The name of the assembly this refernce represents
@@ -167,10 +167,11 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             var hr = solution.GetProjectOfGuid(ref referencedProjectGuid, out hier);
             if (!ErrorHandler.Succeeded(hr))
                 return; // check if project is missing or non-loaded!
-
+            
             object obj;
             hr = hier.GetProperty(VSConstants.VSITEMID_ROOT, (int)__VSHPROPID.VSHPROPID_ExtObject, out obj);
-            ErrorHandler.ThrowOnFailure(hr);
+            if (!ErrorHandler.Succeeded(hr))
+                return;
 
             EnvDTE.Project prj = obj as EnvDTE.Project;
             if (prj == null) 
@@ -303,9 +304,9 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
                     // delete existing error if exists
                     CleanProjectReferenceErrorState();
 
-                    projectRefError = new ErrorTask
+                    projectRefError = new Shell.ErrorTask
                     {
-                        ErrorCategory = TaskErrorCategory.Warning,
+                        ErrorCategory = Shell.TaskErrorCategory.Warning,
                         HierarchyItem = ProjectMgr.InteropSafeIVsHierarchy,
                         Text = text
                     };
@@ -659,14 +660,14 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         /// <summary>
         /// Overridden method. The method updates the build dependency list before removing the node from the hierarchy.
         /// </summary>
-        public override void Remove(bool removeFromStorage)
+        public override void Remove(bool removeFromStorage, bool promptSave = true)
         {
             if (this.ProjectMgr == null || !this.canRemoveReference)
             {
                 return;
             }
             this.ProjectMgr.RemoveBuildDependency(this.buildDependency);
-            base.Remove(removeFromStorage);
+            base.Remove(removeFromStorage, promptSave);
             
             // current reference is removed - delete associated error from list
             CleanProjectReferenceErrorState();
@@ -832,6 +833,9 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         {
             // copying logic from C#'s project system, langref.cpp: IsProjectReferenceReferenceable()
             var otherFrameworkName = GetProjectTargetFrameworkName(thisProject.Site, referencedProjectGuid);
+            if (otherFrameworkName == null)
+                return FrameworkCompatibility.Ok;
+
             if (String.Compare(otherFrameworkName.Identifier, ".NETPortable", StringComparison.OrdinalIgnoreCase) == 0)
             {
                  // we always allow references to projects that are targeted to the Portable/".NETPortable" fx family
@@ -865,8 +869,14 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         private static System.Runtime.Versioning.FrameworkName GetProjectTargetFrameworkName(System.IServiceProvider serviceProvider, Guid referencedProjectGuid)
         {
             var hierarchy = VsShellUtilities.GetHierarchy(serviceProvider, referencedProjectGuid);
+            if (hierarchy == null)
+                return null;
+
             object otherTargetFrameworkMonikerObj;
-            hierarchy.GetProperty(VSConstants.VSITEMID_ROOT, (int)__VSHPROPID4.VSHPROPID_TargetFrameworkMoniker, out otherTargetFrameworkMonikerObj);
+
+            int hr = hierarchy.GetProperty(VSConstants.VSITEMID_ROOT, (int)__VSHPROPID4.VSHPROPID_TargetFrameworkMoniker, out otherTargetFrameworkMonikerObj);
+            if (!ErrorHandler.Succeeded(hr))
+                return null;
 
             string targetFrameworkMoniker = (string)otherTargetFrameworkMonikerObj;
             return new System.Runtime.Versioning.FrameworkName(targetFrameworkMoniker);

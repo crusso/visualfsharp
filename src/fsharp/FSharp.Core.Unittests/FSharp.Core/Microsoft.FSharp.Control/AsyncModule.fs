@@ -9,9 +9,15 @@ open System
 open System.Threading
 open FSharp.Core.Unittests.LibraryTestFx
 open NUnit.Framework
-#if !(FSHARP_CORE_PORTABLE || FSHARP_CORE_NETCORE_PORTABLE)
+#if !(FSCORE_PORTABLE_OLD || FSCORE_PORTABLE_NEW)
 open FsCheck
 #endif
+
+module Utils =
+    let internal memoizeAsync f =
+        let cache = System.Collections.Concurrent.ConcurrentDictionary<'a, System.Threading.Tasks.Task<'b>>()
+        fun (x: 'a) -> // task.Result serialization to sync after done.
+            cache.GetOrAdd(x, fun x -> f(x) |> Async.StartAsTask) |> Async.AwaitTask
 
 type [<Struct>] Dummy (x: int) =
   member this.X = x
@@ -19,7 +25,7 @@ type [<Struct>] Dummy (x: int) =
     member this.Dispose () = ()
 
 
-#if !(FSHARP_CORE_PORTABLE || FSHARP_CORE_NETCORE_PORTABLE)
+#if !(FSCORE_PORTABLE_OLD || FSCORE_PORTABLE_NEW)
 [<AutoOpen>]
 module ChoiceUtils =
 
@@ -39,7 +45,7 @@ module ChoiceUtils =
             | SomeResultAfter t -> t
             | ExceptionAfter t -> t
 
-    /// represent a choice worfklow
+    /// represent a choice workflow
     type ChoiceWorkflow = ChoiceWorkflow of children:ChoiceOp list * cancelAfter:int option
 
     /// normalizes random timeout arguments
@@ -138,7 +144,7 @@ module ChoiceUtils =
 module LeakUtils =
     // when testing for liveness, the things that we want to observe must always be created in
     // a nested function call to avoid the GC (possibly) treating them as roots past the last use in the block.
-    // We also need something non trivial to disuade the compiler from inlining in Release builds.
+    // We also need something non trivial to dissuade the compiler from inlining in Release builds.
     type ToRun<'a>(f : unit -> 'a) =
         member this.Invoke() = f()
    
@@ -227,7 +233,7 @@ type AsyncModule() =
     [<Test>]
     member this.``AwaitWaitHandle.Timeout``() = 
         use waitHandle = new System.Threading.ManualResetEvent(false)
-        let startMs = DateTime.Now.Millisecond
+        let startTime = DateTime.Now
 
         let r = 
             Async.AwaitWaitHandle(waitHandle, 500)
@@ -235,9 +241,9 @@ type AsyncModule() =
 
         Assert.IsFalse(r, "Timeout expected")
 
-        let endMs = DateTime.Now.Millisecond
-        let delta = endMs - startMs
-        Assert.IsTrue(abs ((abs delta) - 500) < 400, sprintf "Delta is too big %d" delta)
+        let endTime = DateTime.Now
+        let delta = endTime - startTime
+        Assert.IsTrue(delta.TotalMilliseconds < 1100.0, sprintf "Expected faster timeout than %.0f ms" delta.TotalMilliseconds)
 
     [<Test>]
     member this.``AwaitWaitHandle.TimeoutWithCancellation``() = 
@@ -284,20 +290,47 @@ type AsyncModule() =
     [<Test>]
     member this.``OnCancel.RaceBetweenCancellationHandlerAndDisposingHandlerRegistration``() = 
         let test() = 
-            let flag = ref 0
-            let isSet() = lock flag (fun() -> !flag = 1)
+            use flag = new ManualResetEvent(false)
+            use cancelHandlerRegistered = new ManualResetEvent(false)
             let cts = new System.Threading.CancellationTokenSource()
             let go = async {
-                use! holder = Async.OnCancel(fun() -> lock flag (fun() -> flag := 1) |> ignore)
+                use! holder = Async.OnCancel(fun() -> lock flag (fun() -> flag.Set()) |> ignore)
+                let _ = cancelHandlerRegistered.Set()
                 while true do
                     do! Async.Sleep 50
                 }
+
             Async.Start (go, cancellationToken = cts.Token)
-            sleep(100)
+            //wait until we are sure the Async.OnCancel has run:
+            Assert.IsTrue(cancelHandlerRegistered.WaitOne(TimeSpan.FromSeconds 5.))
+            //now cancel:
             cts.Cancel()
-            sleep(100)
-            Assert.IsTrue(isSet())
-        for _i = 1 to 3 do test()
+            //cancel handler should have run:
+            Assert.IsTrue(flag.WaitOne(TimeSpan.FromSeconds 5.))
+
+        for _i = 1 to 300 do test()
+
+    [<Test>]
+    member this.``OnCancel.RaceBetweenCancellationAndDispose``() = 
+        let flag = ref 0
+        let cts = new System.Threading.CancellationTokenSource()
+        let go = async {
+            use disp =
+                cts.Cancel()
+                { new IDisposable with
+                    override __.Dispose() = incr flag }
+            while true do
+                do! Async.Sleep 50
+            }
+        try
+            Async.RunSynchronously (go, cancellationToken = cts.Token)
+        with
+#if FX_NO_OPERATION_CANCELLED
+            _ -> ()
+#else
+            :? System.OperationCanceledException -> ()
+#endif
+        Assert.AreEqual(1, !flag)
 
     [<Test>]
     member this.``OnCancel.CancelThatWasSignalledBeforeRunningTheComputation``() = 
@@ -326,7 +359,7 @@ type AsyncModule() =
         for _i = 1 to 3 do test()
 
 
-    [<Test; Category("Expensive")>]
+    [<Test; Category("Expensive"); Explicit>]
     member this.``Async.AwaitWaitHandle does not leak memory`` () =
         // This test checks that AwaitWaitHandle does not leak continuations (described in #131),
         // We only test the worst case - when the AwaitWaitHandle is already set.
@@ -388,9 +421,7 @@ type AsyncModule() =
                 Assert.Fail("TimeoutException expected")
             with
                 :? System.TimeoutException -> ()
-#if FSHARP_CORE_PORTABLE
-// do nothing
-#else
+#if !FSCORE_PORTABLE_OLD
     [<Test>]
     member this.``RunSynchronously.NoThreadJumpsAndTimeout.DifferentSyncContexts``() = 
         let run syncContext =
@@ -420,10 +451,11 @@ type AsyncModule() =
     member this.``RaceBetweenCancellationAndError.Sleep``() =
         testErrorAndCancelRace (Async.Sleep (-5))
 
-#if !(FSHARP_CORE_PORTABLE || FSHARP_CORE_NETCORE_PORTABLE)
-    [<Test; Category("Expensive")>] // takes 3 minutes!
+#if !(FSCORE_PORTABLE_OLD || FSCORE_PORTABLE_NEW || coreclr)
+    [<Test; Category("Expensive"); Explicit>] // takes 3 minutes!
     member this.``Async.Choice specification test``() =
-        Check.QuickThrowOnFailure (normalize >> runChoice)
+        ThreadPool.SetMinThreads(100,100) |> ignore
+        Check.One ({Config.QuickThrowOnFailure with EndSize = 20}, normalize >> runChoice)
 #endif
 
     [<Test>]
@@ -471,9 +503,7 @@ type AsyncModule() =
             }
         Async.RunSynchronously(test)
         
-#if FSHARP_CORE_NETCORE_PORTABLE
-// nothing
-#else
+#if !FSCORE_PORTABLE_NEW
     [<Test>]
     member this.``FromContinuationsCanTailCallCurrentThread``() = 
         let cnt = ref 0
@@ -551,12 +581,7 @@ type AsyncModule() =
         Assert.AreEqual("boom", !r)
 
 
-#if FSHARP_CORE_PORTABLE
-// nothing
-#else
-#if FSHARP_CORE_NETCORE_PORTABLE
-// nothing
-#else
+#if !FSCORE_PORTABLE_OLD && !FSCORE_PORTABLE_NEW
     [<Test>]
     member this.``SleepContinuations``() = 
         let okCount = ref 0
@@ -584,4 +609,35 @@ type AsyncModule() =
         Assert.AreEqual(0, !okCount)
         Assert.AreEqual(0, !errCount)
 #endif
-#endif
+
+    [<Test>]
+    member this.``Async caching should work``() = 
+        let x = ref 0
+        let someSlowFunc _mykey = async { 
+            Console.WriteLine "Simulated downloading..."
+            do! Async.Sleep 400
+            Console.WriteLine "Simulated downloading Done."
+            x := !x + 1 // Side effect!
+            return "" }
+
+        let memFunc = Utils.memoizeAsync <| someSlowFunc
+
+        async {
+            do! memFunc "a" |> Async.Ignore
+            do! memFunc "a" |> Async.Ignore
+            do! memFunc "a" |> Async.Ignore
+            do! [|1 .. 30|] |> Seq.map(fun _ -> (memFunc "a")) 
+                |> Async.Parallel |> Async.Ignore
+            for _i = 1 to 30 do
+                Async.Start( memFunc "a" |> Async.Ignore )
+                Async.Start( memFunc "a" |> Async.Ignore )
+            do! Async.Sleep 500
+            do! memFunc "a" |> Async.Ignore
+            do! memFunc "a" |> Async.Ignore
+            for _i = 1 to 30 do
+                Async.Start( memFunc "a" |> Async.Ignore )
+
+            do! [|1 .. 30|] |> Seq.map(fun _ -> (memFunc "a")) 
+                |> Async.Parallel |> Async.Ignore
+        } |> Async.RunSynchronously
+        Assert.AreEqual(1, !x)

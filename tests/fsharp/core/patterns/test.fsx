@@ -3,35 +3,32 @@
  * Initially just some tests related to top-level let-pattern bug.
  * Later regression tests that patterns do project out the bits expected?
  *)
-#if Portable
+#if TESTS_AS_APP
 module Core_patterns
 #endif
 
+open System
+open System.Reflection
+
 #light
 
-let failures = ref false
-let report_failure s  = 
-  stderr.WriteLine ("NO: test "+s+" failed"); failures := true
-let test s b = if b then () else report_failure(s) 
+let failures = ref []
+
+let report_failure (s : string) = 
+    stderr.Write" NO: "
+    stderr.WriteLine s
+    failures := !failures @ [s]
+
+let test (s : string) b = 
+    stderr.Write(s)
+    if b then stderr.WriteLine " OK"
+    else report_failure (s)
+
 let check s x1 x2 = 
     if (x1 = x2) then 
         stderr.WriteLine ("test "+s+": ok")
     else 
         report_failure(s)
-
-#if NetCore
-#else
-let argv = System.Environment.GetCommandLineArgs() 
-let SetCulture() = 
-  if argv.Length > 2 && argv.[1] = "--culture" then  begin
-    let cultureString = argv.[2] in 
-    let culture = new System.Globalization.CultureInfo(cultureString) in 
-    stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-    System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
-  end 
-  
-do SetCulture()    
-#endif
 
 (* What kinds of top-leval let patterns are possible? *)
 
@@ -195,6 +192,7 @@ end
 module System_Type_Example2 = begin
 
     open System
+    open System.Reflection
     
     let (|Named|Array|ByRef|Ptr|Param|) (typ : System.Type) =
         if typ.IsGenericType        then Named(typ.GetGenericTypeDefinition(), typ.GetGenericArguments())
@@ -687,8 +685,7 @@ module Combinator_Examples = begin
 
 end
 
-#if Portable
-#else
+#if !FX_PORTABLE_OR_NETSTANDARD
 module XmlPattern_Examples = begin
 
 
@@ -787,7 +784,7 @@ module RegExp =
     check "fwhin3op9" ((|Match|_|) "^.*.ml$" "abc.ml") (Some [])
 
     let testFun() = 
-        File.WriteAllLines("test.fs", seq { for (IsMatch "(.*).fs" f) in allFiles System.Environment.CurrentDirectory do yield! "-------------------------------" :: "\n" :: "\n" :: ("// FILE: "+f) :: "" :: "module "+(f |> Path.GetDirectoryName |> Path.GetFileName |> (fun s -> s.ToUpper()))+ " =" :: [ for line in Array.toList (File.ReadAllLines(f)) -> "    "+line ] } |> Seq.toArray)
+        File.WriteAllLines("test.fs", seq { for (IsMatch "(.*).fs" f) in allFiles (System.IO.Directory.GetCurrentDirectory()) do yield! "-------------------------------" :: "\n" :: "\n" :: ("// FILE: "+f) :: "" :: "module "+(f |> Path.GetDirectoryName |> Path.GetFileName |> (fun s -> s.ToUpper()))+ " =" :: [ for line in Array.toList (File.ReadAllLines(f)) -> "    "+line ] } |> Seq.toArray)
 
 module RandomWalk = 
     let ran = new System.Random()
@@ -816,8 +813,7 @@ module RandomTEst =
     type IEvenCooler =
         inherit ICool
     
-#if Portable
-#else
+#if !FX_PORTABLE_OR_NETSTANDARD
 module RandomCodeFragment = 
     open System
 
@@ -869,7 +865,7 @@ module ActivePatternsFromTheHub =
     // The intention of the example appears to be that additional calling plans are given semantics
     // by new rules that resolve how they interact in a fairly adhoc way with the call data.
     // It's hard to see how you would permit "arbitrary" extensions in a modular way for
-    // this example, since the hardest part is always in the resolution of potential conflicts and
+    // this example, since the devil is always in the resolution of potential conflicts and
     // ambiguities with other rules. If I've misunderstood the kind of extensibility you require
     // then please let me know. In any case it's a great example of adhoc matching.
     type userData = 
@@ -1091,11 +1087,244 @@ module TypecheckingBug_FSharp_1_0_6389 =
         member c.P6 : Nullary<string> = c.M6<int,decimal,string> (Nullary : Nullary<int>) (Nullary : Nullary<decimal>) 
 
 
+module StructUnionMultiCase = 
+    open System
+    open FSharp.Reflection
+
+    [<Struct>]
+    type X = 
+        | Success of result: string 
+        | Fail of Exn: DateTime
+
+    check "ckwjhf24091" typeof<X>.IsValueType true
+
+    for uc in FSharpType.GetUnionCases(typeof<X>) do
+        check "ckwjhf2409" [ for p in uc.GetFields() -> p.Name ] [ match uc.Name with "Success" -> yield "result"  | "Fail" -> yield "Exn" ]
+
+    check "ckwjhf24091" typeof<Result<int,string>>.IsValueType true
+
+    for uc in FSharpType.GetUnionCases(typeof<Result<int,string>>) do
+        check "ckwjhf2409" [ for p in uc.GetFields() -> p.Name ] [ match uc.Name with "Ok" -> yield "ResultValue"  | "Error" -> yield "ErrorValue" ]
+
+module StructUnionMultiCaseLibDefns = 
+
+    /// <summary>The type of optional values, represented as structs.</summary>
+    [<StructuralEquality; StructuralComparison>]
+    [<Struct>]
+    [<RequireQualifiedAccess>]
+    type StructOption<'T> =
+        /// <summary>The representation of "No value"</summary>
+        | None :       StructOption<'T> 
+
+        /// <summary>The representation of "Value of type 'T"</summary>
+        /// <param name="Value">The input value.</param>
+        /// <returns>An option representing the value.</returns>
+        | Some : Value:'T -> StructOption<'T>
+
+    /// <summary>Helper types for active patterns with 2 choices.</summary>
+    //[<UnqualfiedLabels(false)>]
+    [<StructuralEquality; StructuralComparison>]
+    [<CompiledName("FSharpStructChoice`2")>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice<'T1,'T2> = 
+      /// <summary>Choice 1 of 2 choices</summary>
+      | Choice1Of2 of Item1: 'T1 
+      /// <summary>Choice 2 of 2 choices</summary>
+      | Choice2Of2 of Item2: 'T2
+    
+    /// <summary>Helper types for active patterns with 3 choices.</summary>
+    [<StructuralEquality; StructuralComparison>]
+    [<CompiledName("FSharpStructChoice`3")>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice<'T1,'T2,'T3> = 
+      /// <summary>Choice 1 of 3 choices</summary>
+      | Choice1Of3 of Item1: 'T1 
+      /// <summary>Choice 2 of 3 choices</summary>
+      | Choice2Of3 of Item2: 'T2
+      /// <summary>Choice 3 of 3 choices</summary>
+      | Choice3Of3 of Item3: 'T3
+    
+    /// <summary>Helper types for active patterns with 4 choices.</summary>
+    [<StructuralEquality; StructuralComparison>]
+    [<CompiledName("FSharpStructChoice`4")>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice<'T1,'T2,'T3,'T4> = 
+      /// <summary>Choice 1 of 4 choices</summary>
+      | Choice1Of4 of Item1: 'T1 
+      /// <summary>Choice 2 of 4 choices</summary>
+      | Choice2Of4 of Item2: 'T2
+      /// <summary>Choice 3 of 4 choices</summary>
+      | Choice3Of4 of Item3: 'T3
+      /// <summary>Choice 4 of 4 choices</summary>
+      | Choice4Of4 of Item4: 'T4
+    
+    /// <summary>Helper types for active patterns with 5 choices.</summary>
+    [<StructuralEquality; StructuralComparison>]
+    [<CompiledName("FSharpStructChoice`5")>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice<'T1,'T2,'T3,'T4,'T5> = 
+      /// <summary>Choice 1 of 5 choices</summary>
+      | Choice1Of5 of Item1: 'T1 
+      /// <summary>Choice 2 of 5 choices</summary>
+      | Choice2Of5 of Item2: 'T2
+      /// <summary>Choice 3 of 5 choices</summary>
+      | Choice3Of5 of Item3: 'T3
+      /// <summary>Choice 4 of 5 choices</summary>
+      | Choice4Of5 of Item4: 'T4
+      /// <summary>Choice 5 of 5 choices</summary>
+      | Choice5Of5 of Item5: 'T5
+    
+    /// <summary>Helper types for active patterns with 6 choices.</summary>
+    [<StructuralEquality; StructuralComparison>]
+    [<CompiledName("FSharpStructChoice`6")>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice<'T1,'T2,'T3,'T4,'T5,'T6> = 
+      /// <summary>Choice 1 of 6 choices</summary>
+      | Choice1Of6 of Item1: 'T1 
+      /// <summary>Choice 2 of 6 choices</summary>
+      | Choice2Of6 of Item2: 'T2
+      /// <summary>Choice 3 of 6 choices</summary>
+      | Choice3Of6 of Item3: 'T3
+      /// <summary>Choice 4 of 6 choices</summary>
+      | Choice4Of6 of Item4: 'T4
+      /// <summary>Choice 5 of 6 choices</summary>
+      | Choice5Of6 of Item5: 'T5
+      /// <summary>Choice 6 of 6 choices</summary>
+      | Choice6Of6 of Item6: 'T6
+    
+    /// <summary>Helper types for active patterns with 7 choices.</summary>
+    [<StructuralEquality; StructuralComparison>]
+    [<CompiledName("FSharpStructChoice`7")>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice<'T1,'T2,'T3,'T4,'T5,'T6,'T7> = 
+      /// <summary>Choice 1 of 7 choices</summary>
+      | Choice1Of7 of Item1: 'T1 
+      /// <summary>Choice 2 of 7 choices</summary>
+      | Choice2Of7 of Item2: 'T2
+      /// <summary>Choice 3 of 7 choices</summary>
+      | Choice3Of7 of Item3: 'T3
+      /// <summary>Choice 4 of 7 choices</summary>
+      | Choice4Of7 of Item4: 'T4
+      /// <summary>Choice 5 of 7 choices</summary>
+      | Choice5Of7 of Item5: 'T5
+      /// <summary>Choice 6 of 7 choices</summary>
+      | Choice6Of7 of Item6: 'T6
+      /// <summary>Choice 7 of 7 choices</summary>
+      | Choice7Of7 of Item7: 'T7
+
+module StructUnionsWithConflictingConstructors = 
+
+    [<StructuralEquality; StructuralComparison>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice = 
+      | Choice1Of2 of Item1: double
+      | Choice2Of2 of Item2: double
+    
+    [<StructuralEquality; StructuralComparison>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice3 = 
+      | Choice1Of3 of Item1: double
+      | Choice2Of3 of Item2: double
+      | Choice3Of3 of Item3: double
+    
+    [<StructuralEquality; StructuralComparison>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice4 = 
+      | Choice1Of4 of Item1: int
+      | Choice2Of4 of Item2: int
+      | Choice3Of4 of Item3: int
+      | Choice4Of4 of Item4: float
+    
+    [<StructuralEquality; StructuralComparison>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice5 = 
+      | Choice1Of5 of Item1: string
+      | Choice2Of5 of Item2: string
+      | Choice3Of5 of Item3: string
+      | Choice4Of5 of Item4: string
+      | Choice5Of5 of Item5: string
+    
+    [<StructuralEquality; StructuralComparison>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice6<'T1> = 
+      | Choice1Of6 of Item1: 'T1 
+      | Choice2Of6 of Item2: 'T1
+      | Choice3Of6 of Item3: 'T1
+      | Choice4Of6 of Item4: 'T1
+      | Choice5Of6 of Item5: 'T1
+      | Choice6Of6 of Item6: 'T1
+    
+    [<StructuralEquality; StructuralComparison>]
+    [<RequireQualifiedAccess>]
+    [<Struct>]
+    type StructChoice7 = 
+      | Choice1Of7 of Item1: byte 
+      | Choice2Of7 of Item2: byte
+      | Choice3Of7 of Item3: byte
+      | Choice4Of7 of Item4: byte
+      | Choice5Of7 of Item5: byte
+      | Choice6Of7 of Item6: byte
+      | Choice7Of7 of Item7: byte
+
+module StructUnionMarshalingBug = 
+    [<Struct>]
+    type Msg0 = 
+      | Zero of key :int
+
+    [<Struct>]
+    type Msg1 = 
+      | One of name :string
+      | Two of key :int
+
+    [<Struct>]
+    type Msg2 = 
+      { name :string
+        key :int
+        tag :int }
+
+    open System.Runtime.InteropServices
+
+    let msg0 = Zero 42
+    let size0 = Marshal.SizeOf(msg0)  
+    check "clcejefdw" size0 (sizeof<int>)
+
+    let msg1 = Two 42
+    let size1 = Marshal.SizeOf(msg1)  
+    check "clcejefdw2" size1 (sizeof<string> + 2*sizeof<int>) // this size may be bigger than expected
+
+    let msg2 = { name = null; key = 42; tag=1 }
+    let size2 = Marshal.SizeOf(msg2)  
+    check "clceje" size2 (sizeof<string> + 2*sizeof<int>)
+
+    // ... alternately ...
+    let buffer = Marshal.AllocHGlobal(64) // HACK: just assumed a much larger size
+    Marshal.StructureToPtr<Msg1>(msg1, buffer, false) 
+
 (* check for failure else sign off "ok" *)
 
-let aa =
-  if !failures then (stdout.WriteLine "Test Failed"; exit 1) 
 
-do (stdout.WriteLine "Test Passed"; 
-    System.IO.File.WriteAllText("test.ok","ok"); 
-    exit 0)
+#if TESTS_AS_APP
+let RUN() = !failures
+#else
+let aa =
+  match !failures with 
+  | [] -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
+#endif
+

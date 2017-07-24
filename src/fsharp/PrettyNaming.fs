@@ -5,14 +5,21 @@
 //--------------------------------------------------------------------------
 
 /// Anything to do with special names of identifiers and other lexical rules 
+#if COMPILER_PUBLIC_API
+module public Microsoft.FSharp.Compiler.PrettyNaming
+#else
 module internal Microsoft.FSharp.Compiler.PrettyNaming
-    open Internal.Utilities
+#endif
+open Internal.Utilities
     open Microsoft.FSharp.Compiler
     open Microsoft.FSharp.Compiler.AbstractIL.Internal
     open Microsoft.FSharp.Compiler.AbstractIL.Internal.Library
     open System.Globalization
     open System.Collections.Generic
     open System.Collections.Concurrent
+
+    module TaggedTextOps = Internal.Utilities.StructuredFormat.TaggedTextOps
+    module LayoutOps = Internal.Utilities.StructuredFormat.LayoutOps
 
 #if FX_RESHAPED_REFLECTION
     open Microsoft.FSharp.Core.ReflectionAdapters
@@ -122,10 +129,19 @@ module internal Microsoft.FSharp.Compiler.PrettyNaming
             t.Add(c) |> ignore
         t
         
-    let IsOpName (name:string) =
+    /// Returns `true` if given string is an operator or double backticked name, e.g. ( |>> ) or ( long identifier ).
+    /// (where ( long identifier ) is the display name for ``long identifier``).
+    let IsOperatorOrBacktickedName (name: string) =
         let nameLen = name.Length
         let rec loop i = (i < nameLen && (opCharSet.Contains(name.[i]) || loop (i+1)))
         loop 0
+
+    /// Returns `true` if given string is an operator display name, e.g. ( |>> )
+    let IsOperatorName (name: string) =
+        let name = if name.StartsWith "( " && name.EndsWith " )" then name.[2..name.Length - 3] else name
+        // there is single operator containing a space - range operator with step: `.. ..`
+        let res = name = ".. .." || name |> Seq.forall (fun c -> opCharSet.Contains c && c <> ' ')
+        res
 
     let IsMangledOpName (n:string) =
         n.StartsWith (opNamePrefix, System.StringComparison.Ordinal)
@@ -152,13 +168,11 @@ module internal Microsoft.FSharp.Compiler.PrettyNaming
 
         /// Memoize compilation of custom operators.
         /// They're typically used more than once so this avoids some CPU and GC overhead.
-        let compiledOperators = ConcurrentDictionary<_,_> (System.StringComparer.Ordinal)
+        let compiledOperators = ConcurrentDictionary<_,string> (System.StringComparer.Ordinal)
 
-        fun op ->
+        fun opp ->
             // Has this operator already been compiled?
-            match compiledOperators.TryGetValue op with
-            | true, opName -> opName
-            | false, _ ->
+            compiledOperators.GetOrAdd(opp, fun (op:string) ->
                 let opLength = op.Length
                 let sb = new System.Text.StringBuilder (opNamePrefix, opNamePrefix.Length + (opLength * maxOperatorNameLength))
                 for i = 0 to opLength - 1 do
@@ -173,8 +187,7 @@ module internal Microsoft.FSharp.Compiler.PrettyNaming
                 let opName = sb.ToString ()
 
                 // Cache the compiled name so it can be reused.
-                compiledOperators.TryAdd (op, opName) |> ignore
-                opName
+                opName)
 
     // +++ GLOBAL STATE
     /// Compiles an operator into a mangled operator name.
@@ -192,7 +205,7 @@ module internal Microsoft.FSharp.Compiler.PrettyNaming
             match standardOpNames.TryGetValue op with
             | true, x -> x
             | false, _ ->
-                if IsOpName op then
+                if IsOperatorOrBacktickedName op then
                     compileCustomOpName op
                 else op
 
@@ -289,9 +302,16 @@ module internal Microsoft.FSharp.Compiler.PrettyNaming
 
     let DemangleOperatorName nm =
         let nm = DecompileOpName nm
-        if IsOpName nm then "( " + nm + " )"
+        if IsOperatorOrBacktickedName nm then "( " + nm + " )"
         else nm
-                  
+    
+    open LayoutOps
+
+    let DemangleOperatorNameAsLayout nonOpTagged nm =
+        let nm = DecompileOpName nm
+        if IsOperatorOrBacktickedName nm then wordL (TaggedTextOps.tagPunctuation "(") ^^ wordL (TaggedTextOps.tagOperator nm) ^^ wordL (TaggedTextOps.tagPunctuation ")")
+        else LayoutOps.wordL (nonOpTagged nm)
+
     let opNameCons = CompileOpName "::"
     let opNameNil = CompileOpName "[]"
     let opNameEquals = CompileOpName "="
@@ -369,6 +389,19 @@ module internal Microsoft.FSharp.Compiler.PrettyNaming
             // The check for the first character here could be eliminated since it's covered
             // by the call to String.forall; it is a fast check used to avoid the call if possible.
             || (s.[0] = '~' && String.forall (fun c -> c = '~') s)
+
+    let IsPunctuation s =
+        if System.String.IsNullOrEmpty s then false else
+        match s with
+        | "," | ";" | "|" | ":" | "." | "*"
+        | "(" | ")"
+        | "[" | "]" 
+        | "{" | "}"
+        | "<" | ">" 
+        | "[|" | "|]" 
+        | "[<" | ">]"
+            -> true
+        | _ -> false
 
     let IsTernaryOperator s = 
         (DecompileOpName s = qmarkSet)

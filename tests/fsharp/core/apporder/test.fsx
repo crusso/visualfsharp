@@ -1,21 +1,27 @@
 // #Conformance #Constants #Recursion #LetBindings #MemberDefinitions #Mutable 
-#if Portable
+#if TESTS_AS_APP
 module Core_apporder
 #endif
 
 #light
-let failures = ref false
-let report_failure (s) = 
-  stderr.WriteLine ("NO: " + s); failures := true
+let failures = ref []
+
+let report_failure (s : string) = 
+    stderr.Write" NO: "
+    stderr.WriteLine s
+    failures := !failures @ [s]
+
 let test s b = if b then () else report_failure(s) 
 
 (* TEST SUITE FOR Int32 *)
 
 let out r (s:string) = r := !r @ [s]
 
-let check s v1 v2 = 
-    if v1 = v2 then printfn "%s: OK" s
-    else report_failure (sprintf "%s: FAILED, expected %A, got %A" s v2 v1)
+let check s actual expected = 
+    if actual = expected then printfn "%s: OK" s
+    else report_failure (sprintf "%s: FAILED, expected %A, got %A" s expected actual)
+
+let check2 s expected actual = check s actual expected 
 
 module CheckMutationOfArgumentValuesInOtherArguments = 
     let test1232() = 
@@ -841,6 +847,7 @@ module AppOneRecGeneric =
         
     test1mod()
     test2mod()
+
     
 module DuplicateTestsWithCondensedArgs = 
     module CheckMutationOfArgumentValuesInOtherArguments = 
@@ -1116,9 +1123,18 @@ module RecordInitialisationWithDifferentTxpes =
         check "cewekcjnwe21" expected actual
         check "cewekcjnwe22" "1234567" !order
 
+#if TESTS_AS_APP
+let RUN() = !failures
+#else
 let aa =
-  if !failures then (stdout.WriteLine "Test Failed"; exit 1) 
-  else (stdout.WriteLine "Test Passed"; 
-        System.IO.File.WriteAllText("test.ok","ok"); 
-        exit 0)
+  match !failures with 
+  | [] -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
+#endif
+
 

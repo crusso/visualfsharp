@@ -11,6 +11,7 @@ open System.Text
 open System.Text.RegularExpressions
 
 // VS namespaces 
+open Microsoft.VisualStudio
 open Microsoft.VisualStudio.Shell
 open Microsoft.VisualStudio.Shell.Interop
 open Microsoft.VisualStudio.FSharp.ProjectSystem
@@ -22,7 +23,7 @@ open UnitTests.TestLib.Utils.Asserts
 open UnitTests.TestLib.Utils.FilesystemHelpers
 open UnitTests.TestLib.ProjectSystem
 
-[<TestFixture>]
+[<TestFixture>][<Category "ProjectSystem">]
 type UpToDate() = 
     inherit TheTests()
 

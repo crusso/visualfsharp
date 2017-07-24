@@ -1,42 +1,21 @@
 // #Conformance #Regression #Recursion #LetBindings 
-(*----------------------------------------------------------------------------
-CONTENTS-START-LINE: HERE=1 SEP=2
- 23.    tlr constants
- 58.    tlr lambdas
- 97.    tlr polymorphic constants?
- 111.   env tests
- 138.   mixed recursion (inner recursing with outer)
- 188.   arity 0 tests
- 211.   value recursion
- 252.   inner constant
- 264.   lifting tests
- 335.   lifting
- 348.   wrap up
-CONTENTS-END-LINE:
-----------------------------------------------------------------------------*)
-#if Portable
+#if TESTS_AS_APP
 module Core_tlr
 #endif
 
-let failures = ref false
-let report_failure s  = 
-  stderr.WriteLine ("NO: test "+s+" failed"); failures := true
+let failures = ref []
+
+let report_failure (s : string) = 
+    stderr.Write" NO: "
+    stderr.WriteLine s
+    failures := !failures @ [s]
+
+let test (s : string) b = 
+    stderr.Write(s)
+    if b then stderr.WriteLine " OK"
+    else report_failure (s)
 
 
-
-#if NetCore
-#else
-let argv = System.Environment.GetCommandLineArgs() 
-let SetCulture() = 
-  if argv.Length > 2 && argv.[1] = "--culture" then  begin
-    let cultureString = argv.[2] in 
-    let culture = new System.Globalization.CultureInfo(cultureString) in 
-    stdout.WriteLine ("Running under culture "+culture.ToString()+"...");
-    System.Threading.Thread.CurrentThread.CurrentCulture <-  culture
-  end 
-  
-do SetCulture()    
-#endif
 
 (*-------------------------------------------------------------------------
  *INDEX: tlr constants
@@ -393,9 +372,18 @@ end
 (*-------------------------------------------------------------------------
  *INDEX: wrap up
  *-------------------------------------------------------------------------*)    
-let aa =
-  if !failures then (stdout.WriteLine "Test Failed"; exit 1) 
 
-do (stdout.WriteLine "Test Passed"; 
-    System.IO.File.WriteAllText("test.ok","ok"); 
-    exit 0)
+#if TESTS_AS_APP
+let RUN() = !failures
+#else
+let aa =
+  match !failures with 
+  | [] -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
+#endif
+

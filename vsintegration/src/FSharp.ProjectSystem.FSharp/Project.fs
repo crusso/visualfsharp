@@ -35,8 +35,10 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
     open Microsoft.VisualStudio.FSharp.ProjectSystem
     open Microsoft.VisualStudio.FSharp.LanguageService
     open Microsoft.VisualStudio.FSharp.ProjectSystem.Automation
+    open Microsoft.VisualStudio.FSharp.Editor
     open Microsoft.VisualStudio.Editors
     open Microsoft.VisualStudio.Editors.PropertyPages
+    open Microsoft.VisualStudio.PlatformUI
     
     open EnvDTE
 
@@ -91,12 +93,15 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
             member ips.ProjectFileName() = inner.ProjectFileName()
             member ips.AdviseProjectSiteChanges(callbackOwnerKey,callback) = inner.AdviseProjectSiteChanges(callbackOwnerKey, callback)
             member ips.AdviseProjectSiteCleaned(callbackOwnerKey,callback) = inner.AdviseProjectSiteCleaned(callbackOwnerKey, callback)
+            member ips.AdviseProjectSiteClosed(callbackOwnerKey,callback) = inner.AdviseProjectSiteClosed(callbackOwnerKey, callback)
             member ips.ErrorListTaskProvider() = inner.ErrorListTaskProvider()
             member ips.ErrorListTaskReporter() = inner.ErrorListTaskReporter()
             member ips.TargetFrameworkMoniker = inner.TargetFrameworkMoniker
+            member ips.ProjectGuid = inner.ProjectGuid
             member ips.IsIncompleteTypeCheckEnvironment = false
             member ips.LoadTime = inner.LoadTime 
-
+            member ips.ProjectProvider = inner.ProjectProvider
+            member ips.AssemblyReferences() = inner.AssemblyReferences()
 
     type internal ProjectSiteOptionLifetimeState =
         | Opening=1  // The project has been opened, but has not yet called Compile() to compute sources/flags
@@ -186,7 +191,32 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
 
             // FSI-LINKAGE-POINT: unsited init
             do Microsoft.VisualStudio.FSharp.Interactive.Hooks.fsiConsoleWindowPackageCtorUnsited (this :> Package)
-                
+
+            let mutable componentID = 0u
+
+            let thisLock = obj()
+
+            // Get the ComponentManager lazily, as the service may not yet have been created at package instantiation
+            member internal this.ComponentManager with get () = this.GetService(typeof<SOleComponentManager>) :?> IOleComponentManager
+
+            member this.RegisterForIdleTime() =
+
+                Debug.Assert(not (isNull this.ComponentManager), "No IOleComponentManager service. Idle operations (such as flushing the 'Error List' queue) will not be performed.")
+            
+                if not (isNull this.ComponentManager) && componentID = 0u then
+                    lock (thisLock) (fun _ -> 
+                        if componentID = 0u then
+                            let crinfo = Array.zeroCreate<OLECRINFO>(1)
+                            let mutable crinfo0 = crinfo.[0]
+                            crinfo0.cbSize <- Marshal.SizeOf(typeof<OLECRINFO>) |> uint32
+                            crinfo0.grfcrf <- uint32 (_OLECRF.olecrfNeedIdleTime ||| _OLECRF.olecrfNeedPeriodicIdleTime)
+                            crinfo0.grfcadvf <- uint32 (_OLECADVF.olecadvfModal ||| _OLECADVF.olecadvfRedrawOff ||| _OLECADVF.olecadvfWarningsOff)
+                            crinfo0.uIdleTimeInterval <- 1000u
+                            crinfo.[0] <- crinfo0
+     
+                            this.ComponentManager.FRegisterComponent(this, crinfo, &componentID) |> ignore
+                    )
+
             /// This method loads a localized string based on the specified resource.
 
             /// <param name="resourceName">Resource to load</param>
@@ -205,6 +235,9 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
 
                 base.Initialize()
 
+                let fSharpEditorFactory = new Microsoft.VisualStudio.FSharp.ProjectSystem.FSharpEditorFactory(this);
+                this.RegisterEditorFactory(fSharpEditorFactory);
+
                 // read list of available FSharp.Core versions
                 do
                     let nullService = 
@@ -212,7 +245,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                             member this.ListAvailableFSharpCoreVersions(_) = Array.empty }
 
                     let service = 
-                        match Internal.Utilities.FSharpEnvironment.BinFolderOfDefaultFSharpCompiler with
+                        match Internal.Utilities.FSharpEnvironment.BinFolderOfDefaultFSharpCompiler(None) with
                         | None -> nullService
                         | Some path ->
                             try
@@ -286,6 +319,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 Microsoft.VisualStudio.FSharp.Interactive.Hooks.fsiConsoleWindowPackageInitalizeSited (this :> Package) commandService
                 // FSI-LINKAGE-POINT: private method GetDialogPage forces fsi options to be loaded
                 let _fsiPropertyPage = this.GetDialogPage(typeof<Microsoft.VisualStudio.FSharp.Interactive.FsiPropertyPage>)
+                this.RegisterForIdleTime()
                 ()
 
             /// This method is called during Devenv /Setup to get the bitmap to
@@ -332,12 +366,52 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 pIdIco <- 400u
                 VSConstants.S_OK
 
+            override this.Dispose(disposing) =
+                try
+                    if not (isNull this.ComponentManager) && componentID <> 0u then
+                        lock (thisLock) (fun _ ->
+                            if componentID <> 0u then
+                                this.ComponentManager.FRevokeComponent(componentID) |> ignore
+                                componentID <- 0u)
+                finally
+                    base.Dispose(disposing)
+
             interface Microsoft.VisualStudio.FSharp.Interactive.ITestVFSI with
                 member this.SendTextInteraction(s:string) =
                     GetToolWindowAsITestVFSI().SendTextInteraction(s)
                 member this.GetMostRecentLines(n:int) : string[] =
                     GetToolWindowAsITestVFSI().GetMostRecentLines(n)
+            
+            interface IOleComponent with
+                override this.FContinueMessageLoop(_uReason:uint32, _pvLoopData:IntPtr, _pMsgPeeked:MSG[]) = 
+                    1
 
+                override this.FDoIdle(grfidlef:uint32) =
+                    // see e.g "C:\Program Files\Microsoft Visual Studio 2008 SDK\VisualStudioIntegration\Common\IDL\olecm.idl" for details
+                    //Trace.Print("CurrentDirectoryDebug", (fun () -> sprintf "curdir='%s'\n" (System.IO.Directory.GetCurrentDirectory())))  // can be useful for watching how GetCurrentDirectory changes
+                    let periodic = (grfidlef &&& (uint32 _OLEIDLEF.oleidlefPeriodic)) <> 0u
+                    if periodic && not (isNull this.ComponentManager) && this.ComponentManager.FContinueIdle() <> 0 then
+                        TaskReporterIdleRegistration.DoIdle(this.ComponentManager)
+                    else
+                        0
+
+                override this.FPreTranslateMessage(_pMsg) = 0
+
+                override this.FQueryTerminate(_fPromptUser) = 1
+
+                override this.FReserved1(_dwReserved, _message, _wParam, _lParam) = 1
+
+                override this.HwndGetWindow(_dwWhich, _dwReserved) = 0n
+
+                override this.OnActivationChange(_pic, _fSameComponent, _pcrinfo, _fHostIsActivating, _pchostinfo, _dwReserved) = ()
+
+                override this.OnAppActivate(_fActive, _dwOtherThreadID) = ()
+
+                override this.OnEnterState(_uStateID, _fEnter)  = ()
+        
+                override this.OnLoseActivation() = ()
+
+                override this.Terminate() = ()
 
     /// Factory for creating our editor, creates FSharp Projects
     [<Guid(GuidList.guidFSharpProjectFactoryString)>]
@@ -362,10 +436,6 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
     type internal FSharpProjectNode(package:FSharpProjectPackage) as this = 
             inherit ProjectNode() 
 
-#if FX_ATLEAST_45  
-#else
-            let GUID_MruPage = new Guid("{BF42FC6C-1C43-487F-A524-C2E7BC707479}")
-#endif
             let mutable vsProject : VSLangProj.VSProject = null
             let mutable trackDocumentsHandle = 0u
             let mutable addFilesNotification : option<(array<string> -> unit)> = None  // this object is only used for helping re-order newly added files (VS defaults to alphabetical order)
@@ -373,6 +443,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
             let mutable updateSolnEventsHandle = 0u
             let mutable updateSolnEventsHandle2 = 0u
             let mutable updateSolnEventsHandle3 = 0u
+            let mutable updateSolnEventsHandle4 = 0u
 
             let mutable trackProjectRetargetingCookie = 0u
             
@@ -397,6 +468,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
             
             let sourcesAndFlagsNotifier = new Notifier()
             let cleanNotifier = new Notifier()
+            let closeNotifier = new Notifier()
             
             [<Microsoft.FSharp.Core.DefaultValue>]
             static val mutable private imageOffset : int 
@@ -518,14 +590,26 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 let listener = new SolutionEventsListener(this)
 
                 let buildMgr = this.Site.GetService(typeof<SVsSolutionBuildManager>) :?> IVsSolutionBuildManager
+                if updateSolnEventsHandle <> 0u then
+                    buildMgr.UnadviseUpdateSolutionEvents(updateSolnEventsHandle) |> ignore
                 buildMgr.AdviseUpdateSolutionEvents((listener :> IVsUpdateSolutionEvents), &updateSolnEventsHandle) |> ignore
                 let buildMgr2 = this.Site.GetService(typeof<SVsSolutionBuildManager>) :?> IVsSolutionBuildManager2
+                if updateSolnEventsHandle2 <> 0u then
+                    buildMgr2.UnadviseUpdateSolutionEvents(updateSolnEventsHandle2) |> ignore
                 buildMgr2.AdviseUpdateSolutionEvents((listener :> IVsUpdateSolutionEvents2), &updateSolnEventsHandle2) |> ignore
                 let buildMgr3 = this.Site.GetService(typeof<SVsSolutionBuildManager>) :?> IVsSolutionBuildManager3
+                if updateSolnEventsHandle3 <> 0u then
+                    buildMgr3.UnadviseUpdateSolutionEvents3(updateSolnEventsHandle3) |> ignore
                 buildMgr3.AdviseUpdateSolutionEvents3((listener :> IVsUpdateSolutionEvents3), &updateSolnEventsHandle3) |> ignore
+                let buildMgr5 = this.Site.GetService(typeof<SVsSolutionBuildManager>) :?> IVsSolutionBuildManager5
+                if updateSolnEventsHandle4 <> 0u then
+                    buildMgr5.UnadviseUpdateSolutionEvents4(updateSolnEventsHandle4) |> ignore
+                buildMgr5.AdviseUpdateSolutionEvents4((listener :> IVsUpdateSolutionEvents4), &updateSolnEventsHandle4) |> ignore
 
                 // Register for project retargeting events
                 let sTrackProjectRetargeting = this.Site.GetService(typeof<SVsTrackProjectRetargeting>) :?> IVsTrackProjectRetargeting
+                if trackProjectRetargetingCookie <> 0u then
+                    sTrackProjectRetargeting.UnadviseTrackProjectRetargetingEvents(trackProjectRetargetingCookie) |> ignore
                 sTrackProjectRetargeting.AdviseTrackProjectRetargetingEvents((listener :> IVsTrackProjectRetargetingEvents), &trackProjectRetargetingCookie) |> ignore
 
                 isInCommandLineMode <-
@@ -548,6 +632,8 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 buildMgr2.UnadviseUpdateSolutionEvents(updateSolnEventsHandle2) |> ignore
                 let buildMgr3 = this.Site.GetService(typeof<SVsSolutionBuildManager>) :?> IVsSolutionBuildManager3
                 buildMgr3.UnadviseUpdateSolutionEvents3(updateSolnEventsHandle3) |> ignore
+                let buildMgr5 = this.Site.GetService(typeof<SVsSolutionBuildManager>) :?> IVsSolutionBuildManager5
+                buildMgr5.UnadviseUpdateSolutionEvents4(updateSolnEventsHandle4) |> ignore
 
                 let documentTracker = this.Site.GetService(typeof<SVsTrackProjectDocuments>) :?> IVsTrackProjectDocuments2
                 documentTracker.UnadviseTrackProjectDocumentsEvents(trackDocumentsHandle) |> ignore
@@ -563,6 +649,8 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                     | Some(libraryManager) -> 
                         libraryManager.UnregisterHierarchy(this.InteropSafeIVsHierarchy)
                     | _ -> ()
+
+                closeNotifier.Notify()
                 vsProject <- null
                 accessor <- null
                 base.Close()
@@ -598,7 +686,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                     vsProject
                         
             [<Conditional("DEBUG")>]
-            member this.EnsureMSBuildAndSolutionExplorerAreInSync() =
+            override this.EnsureMSBuildAndSolutionExplorerAreInSync() =
                 let AllSolutionExplorerFilenames() =
                     let rec Compute (node : HierarchyNode, accum) =
                         if obj.ReferenceEquals(node,null) then
@@ -640,7 +728,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
 
             override x.GetGuidProperty(propid:int, guid:byref<Guid> ) =
                 if (enum propid = __VSHPROPID.VSHPROPID_PreferredLanguageSID) then 
-                    guid <- new Guid(FSharpCommonConstants.languageServiceGuidString)
+                    guid <- new Guid(FSharpConstants.languageServiceGuidString)
                     VSConstants.S_OK
                 // below is how VS decide 'which templates' to associate with an 'add new item' call in this project
                 elif (enum propid = __VSHPROPID2.VSHPROPID_AddItemTemplatesGuid) then 
@@ -649,13 +737,19 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 else
                     base.GetGuidProperty(propid, &guid)
 
-            member fshProjNode.MoveNewlyAddedFileSomehow<'a>(move : (*relativeFileName*)string -> unit, f : unit -> 'a) : 'a =
+            member fshProjNode.MoveNewlyAddedFileSomehow<'a>(move : FSharpFileNode -> unit, f : unit -> 'a) : 'a =
                 Debug.Assert(addFilesNotification.IsNone, "bad use of addFilesNotification")
-                addFilesNotification <- Some(fun files -> 
+                addFilesNotification <- Some (fun files -> 
                     Debug.Assert(files.Length = 1)
                     let absoluteFileName = files.[0]
-                    let relativeFileName = PackageUtilities.MakeRelativeIfRooted(absoluteFileName, fshProjNode.BaseURI)
-                    move(relativeFileName))
+
+                    match fshProjNode.FindChild absoluteFileName with
+                    | :? FSharpFileNode as fileNode ->
+                        move fileNode
+                    | node ->
+                        let relativeFileName = PackageUtilities.MakeRelativeIfRooted(absoluteFileName, fshProjNode.BaseURI)
+                        Debug.Assert(false, sprintf "Expected to find newly added FSharpFileNode in hierarchy '%s', but found '%O'" relativeFileName node)
+                    )
                 try
                     let r = f()
                     fshProjNode.ComputeSourcesAndFlags()
@@ -664,21 +758,30 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                     addFilesNotification <- None
 
             member fshProjNode.MoveNewlyAddedFileAbove<'a>(nodeToMoveAbove : HierarchyNode, f : unit -> 'a) : 'a =
-                fshProjNode.MoveNewlyAddedFileSomehow((fun relativeFileName -> MSBuildUtilities.MoveFileAbove(relativeFileName, nodeToMoveAbove, fshProjNode)
-                                                                               FSharpFileNode.MoveLastToAbove(nodeToMoveAbove, fshProjNode) |> ignore)
-                                                      , f)
+                fshProjNode.MoveNewlyAddedFileSomehow((fun fileNode ->
+                    FSharpFileNode.MoveToBottomOfGroup(fileNode)
+                    FSharpFileNode.MoveTo(Above, nodeToMoveAbove, fileNode)
+                    MSBuildUtilities.SyncWithHierarchy(fileNode)
+                    ), f)
 
             member fshProjNode.MoveNewlyAddedFileBelow<'a>(nodeToMoveBelow : HierarchyNode, f : unit -> 'a) : 'a =
-                fshProjNode.MoveNewlyAddedFileSomehow((fun relativeFileName -> MSBuildUtilities.MoveFileBelow(relativeFileName, nodeToMoveBelow, fshProjNode)
-                                                                               FSharpFileNode.MoveLastToBelow(nodeToMoveBelow, fshProjNode) |> ignore)
-                                                      , f)
+                fshProjNode.MoveNewlyAddedFileSomehow((fun fileNode ->
+                    FSharpFileNode.MoveToBottomOfGroup(fileNode)
+                    FSharpFileNode.MoveTo(Below, nodeToMoveBelow, fileNode)
+                    MSBuildUtilities.SyncWithHierarchy(fileNode)
+                    ), f)
 
             member fshProjNode.MoveNewlyAddedFileToBottomOfGroup<'a> (f : unit -> 'a) : 'a =
-                fshProjNode.MoveNewlyAddedFileSomehow((fun relativeFileName -> MSBuildUtilities.MoveFileToBottomOfGroup(relativeFileName, fshProjNode)), f)
+                fshProjNode.MoveNewlyAddedFileSomehow((fun fileNode ->
+                    FSharpFileNode.MoveToBottomOfGroup(fileNode)
+                    MSBuildUtilities.SyncWithHierarchy(fileNode)
+                    ), f)
 
-            override fshProjNode.MoveFileToBottomIfNoOtherPendingMove(relativeFileName) = 
+            override fshProjNode.MoveFileToBottomIfNoOtherPendingMove(fileNode) = 
                 match addFilesNotification with
-                | None -> MSBuildUtilities.MoveFileToBottomOfGroup(relativeFileName, fshProjNode)
+                | None ->
+                    FSharpFileNode.MoveToBottomOfGroup(fileNode)
+                    MSBuildUtilities.SyncWithHierarchy(fileNode)
                 | Some _ -> ()
 
             override fshProjNode.ExecCommandOnNode(guidCmdGroup:Guid, cmd:uint32, nCmdexecopt:uint32, pvaIn:IntPtr, pvaOut:IntPtr ) =
@@ -708,13 +811,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                     base.ExecCommandOnNode(guidCmdGroup, cmd, nCmdexecopt, pvaIn, pvaOut)
 
             override fshProjNode.QueryStatusOnNode(guidCmdGroup : Guid, cmd : UInt32, pCmdText : IntPtr, result : byref<QueryStatusResult>) =
-                if guidCmdGroup = VsMenus.guidStandardCommandSet97 then
-                    if (cmd |> int32 |> enum) = Microsoft.VisualStudio.VSConstants.VSStd97CmdID.NewFolder then
-                        result <- result ||| QueryStatusResult.SUPPORTED ||| QueryStatusResult.INVISIBLE 
-                        VSConstants.S_OK
-                    else
-                        base.QueryStatusOnNode(guidCmdGroup, cmd, pCmdText, &result)
-                elif guidCmdGroup = VsMenus.guidStandardCommandSet2K then
+                if guidCmdGroup = VsMenus.guidStandardCommandSet2K then
                     match (cmd |> int32 |> enum) : VSConstants.VSStd2KCmdID with 
                     | _ when cmd = MyVSConstants.ExploreFolderInWindows ->
                         result <- result ||| QueryStatusResult.SUPPORTED ||| QueryStatusResult.ENABLED
@@ -857,6 +954,9 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 elif (String.Compare(Path.GetExtension(strFileName), ".map", StringComparison.OrdinalIgnoreCase) = 0) then
                     ProjectFileConstants.Content
                 
+                elif (String.Compare(Path.GetExtension(strFileName), ".xaml", StringComparison.OrdinalIgnoreCase) = 0) then
+                    ProjectFileConstants.Resource
+                
                 // None (including .fsx/.fsscript)
                 else
                     ProjectFileConstants.None
@@ -912,7 +1012,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
 
                 let stripEndingSemicolon (sb : StringBuilder) =
                     let len = sb.Length
-                    if sb.[len - 1] = ';' then sb.Remove(len - 1, 1) |> ignore
+                    if len > 0 && sb.[len - 1] = ';' then sb.Remove(len - 1, 1) |> ignore
                     ()
 
                 let targetFrameworkMoniker = this.GetTargetFrameworkMoniker()
@@ -926,8 +1026,6 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                         let _ = paths.Append(selData.[0].bstrFile + ";")
                         ()
                     stripEndingSemicolon paths
-
-#if FX_ATLEAST_45  // Dev11 has a new dialog
 
                 let dialogTitle = 
                     let text = FSharpSR.GetString(FSharpSR.AddReferenceDialogTitleDev11)
@@ -1198,90 +1296,6 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 finally
                     // Let the project know it can show itself in the Add Project Reference Dialog page
                     this.ShowProjectInSolutionPage <- true
-#else
-                let dialogTitle = FSharpSR.GetString(FSharpSR.AddReferenceDialogTitle)
-                
-                let browseFilter = String.Format("{0}{1}*.dll;*.exe{1}{1}", [| box(FSharpSR.GetString(FSharpSR.ComponentFileExtensionFilter)); box "\u0000"|])
-                let mutable tabInit0 = new VSCOMPONENTSELECTORTABINIT()
-                tabInit0.dwSize <-  Marshal.SizeOf(typeof<VSCOMPONENTSELECTORTABINIT>) |> uint32
-                tabInit0.varTabInitInfo <- paths.ToString()
-                tabInit0.guidTab <- VSConstants.GUID_COMPlusPage
-
-                //Add the COM page
-                let mutable tabInit1 = new VSCOMPONENTSELECTORTABINIT()
-                tabInit1.dwSize <- Marshal.SizeOf(typeof<VSCOMPONENTSELECTORTABINIT>) |> uint32
-                tabInit1.varTabInitInfo <- box 0
-                tabInit1.guidTab <- VSConstants.GUID_COMClassicPage
-
-                //Add the Project page
-                let mutable tabInit2 = new VSCOMPONENTSELECTORTABINIT()
-                tabInit2.dwSize <- Marshal.SizeOf(typeof<VSCOMPONENTSELECTORTABINIT>) |> uint32
-                // Tell the Add Reference dialog to call hierarchies GetProperty with the following
-                // propID to enablefiltering out ourself from the Project to Project reference
-                tabInit2.varTabInitInfo <- box (int32 __VSHPROPID.VSHPROPID_ShowProjInSolutionPage)
-                tabInit2.guidTab <- VSConstants.GUID_SolutionPage
-
-                // Add the Browse page                  
-                let mutable tabInit3 = new VSCOMPONENTSELECTORTABINIT()
-                tabInit3.dwSize <- Marshal.SizeOf(typeof<VSCOMPONENTSELECTORTABINIT>)  |> uint32
-                tabInit3.guidTab <- VSConstants.GUID_BrowseFilePage
-                tabInit3.varTabInitInfo <- box 0
-
-                //// Add the Recent page                        
-                let mutable tabInit4 = new VSCOMPONENTSELECTORTABINIT()
-                tabInit4.dwSize <- Marshal.SizeOf(typeof<VSCOMPONENTSELECTORTABINIT>)  |> uint32
-                tabInit4.guidTab <- GUID_MruPage
-                tabInit4.varTabInitInfo <- box 0
-
-                let tabInit = [| tabInit0; tabInit1; tabInit2; tabInit3; tabInit4; |] 
-
-                let o = this.GetService(typeof<SVsComponentSelectorDlg>)
-                let componentDialog = match o with
-                                      | :? IVsComponentSelectorDlg4 as x -> x
-                                      | _ -> null
-                begin
-                    try 
-                        try
-                            // call the container to open the add reference dialog.
-                            if (componentDialog <> null) then 
-                                // Let the project know not to show itself in the Add Project Reference Dialog page
-                                this.ShowProjectInSolutionPage <- false
-
-                                let mutable pX = 0u
-                                let mutable pY = 0u
-                                let mutable startingTabGuid = VSConstants.GUID_SolutionPage
-
-                                // call the container to open the add reference dialog.
-                                let strBrowseLocations = Path.GetDirectoryName(this.BaseURI.Uri.LocalPath)
-                                ErrorHandler.ThrowOnFailure
-                                   (componentDialog.ComponentSelectorDlg5
-                                        ((uint32) (__VSCOMPSELFLAGS.VSCOMSEL_MultiSelectMode ||| __VSCOMPSELFLAGS.VSCOMSEL_IgnoreMachineName),
-                                         (this :> IVsComponentUser),
-                                          0u,
-                                          null,
-                                          dialogTitle,   // Title
-                                          "VS.AddReference",         // Help topic
-                                          &pX,
-                                          &pY,
-                                          (uint32)tabInit.Length,
-                                          tabInit,
-                                          &startingTabGuid,
-                                          browseFilter,
-                                          ref strBrowseLocations, 
-                                          targetFrameworkMoniker))
-                            else
-                               VSConstants.S_OK
-
-                        with  (:? COMException as e) -> 
-#if DEBUG
-                            Trace.WriteLine("Exception : " + e.Message)
-#endif
-                            e.ErrorCode
-                    finally
-                        // Let the project know it can show itself in the Add Project Reference Dialog page
-                        this.ShowProjectInSolutionPage <- true
-                end
-#endif
 
             override x.CreateConfigProvider() = new ConfigProvider(this)
             
@@ -1344,16 +1358,25 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                         yield System.IO.Path.GetFullPath(System.IO.Path.Combine(projectFolder, i.EvaluatedInclude))
                 |]
             member x.GetCompileItems() = let sources,_ = sourcesAndFlags.Value in sources
-            member x.GetCompileFlags() =  let _,flags = sourcesAndFlags.Value in flags
+            member x.GetCompileFlags() = let _,flags = sourcesAndFlags.Value in flags
 
             override x.ComputeSourcesAndFlags() =
-                if x.IsInBatchUpdate || box x.BuildProject = null then ()
-                else
-#if FX_ATLEAST_45
-                if not(inMidstOfReloading) && not(VsBuildManagerAccessorExtensionMethods.IsInProgress(accessor)) then
-#else
-                if not(inMidstOfReloading) && not(FSharpBuildStatus.IsInProgress) then
-#endif
+
+                if not x.IsInBatchUpdate && box x.BuildProject <> null && not inMidstOfReloading && not (VsBuildManagerAccessorExtensionMethods.IsInProgress(accessor)) then
+
+                    use sourcesAndFlagsWaitDialog =
+                        {
+                            WaitCaption = FSharpSR.GetString FSharpSR.ProductName
+                            WaitMessage = FSharpSR.GetString FSharpSR.ComputingSourcesAndFlags
+                            ProgressText = Some x.ProjectFile
+                            StatusBmpAnim = null
+                            StatusBarText = None
+                            DelayToShowDialogSecs = 1
+                            IsCancelable = false
+                            ShowMarqueeProgress = true
+                        }
+                        |> WaitDialog.start x.Site
+                
                     // REVIEW CompilerFlags will be stale since last 'save' of MSBuild .fsproj file - can we do better?
                     try
                         actuallyBuild <- false 
@@ -1377,10 +1400,11 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                         // If property is not set - msbuild will resolve only primary dependencies,
                         // and compiler will be very unhappy when during processing of referenced assembly it will discover that all fundamental types should be
                         // taken from System.Runtime that is not supplied
-                        let _ = x.InvokeMsBuild("Compile", isBeingCalledByComputeSourcesAndFlags = true, extraProperties = [KeyValuePair("_ResolveReferenceDependencies", "true")])
+                        
+                        let _ = x.InvokeMsBuild("Compile", extraProperties = [KeyValuePair("_ResolveReferenceDependencies", "true")])
                         sourcesAndFlagsNotifier.Notify()
                     finally
-                        actuallyBuild <- true 
+                        actuallyBuild <- true
 
             member internal x.DetermineRuntimeAndSKU(targetFrameworkMoniker : string) =
                 let frameworkName = new System.Runtime.Versioning.FrameworkName(targetFrameworkMoniker)
@@ -1459,7 +1483,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                     member ips.DescriptionOfProject() = 
                         let sources,flags = sourcesAndFlags.Value
                         sprintf "Project System: flags(%A) sources:\n%A" flags sources
-                    member ips.CompilerFlags() = let _,flags = sourcesAndFlags.Value in flags
+                    member ips.CompilerFlags() = x.GetCompileFlags()
                     member ips.ProjectFileName() = MSBuildProject.GetFullPath(x.BuildProject)
                     member ips.ErrorListTaskProvider() = Some(x.TaskProvider)
                     member ips.ErrorListTaskReporter() = Some(x.TaskReporter)
@@ -1467,9 +1491,21 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                         sourcesAndFlagsNotifier.Advise(callbackOwnerKey,callback)
                     member this.AdviseProjectSiteCleaned(callbackOwnerKey,callback) =
                         cleanNotifier.Advise(callbackOwnerKey,callback)
+                    member this.AdviseProjectSiteClosed(callbackOwnerKey,callback) =
+                        closeNotifier.Advise(callbackOwnerKey,callback)
                     member this.IsIncompleteTypeCheckEnvironment = false
                     member this.TargetFrameworkMoniker = x.GetTargetFrameworkMoniker()
+                    member this.ProjectGuid = x.GetProjectGuid()
                     member this.LoadTime = creationTime
+                    member this.ProjectProvider = Some (x :> IProvideProjectSite)
+                    member this.AssemblyReferences() =
+                        x.GetReferenceContainer().EnumReferences()
+                        |> Seq.choose (
+                            function
+                            | :? AssemblyReferenceNode as arn -> Some arn.Url
+                            | _ -> None
+                            )
+                        |> Array.ofSeq
                 }
 
             // Snapshot-capture relevent values from "this", and returns an IProjectSite 
@@ -1486,6 +1522,14 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 let taskReporter = Some(x.TaskReporter)
                 let targetFrameworkMoniker = x.GetTargetFrameworkMoniker()
                 let creationTime = System.DateTime.Now 
+                let assemblyReferences =
+                    x.GetReferenceContainer().EnumReferences()
+                    |> Seq.choose (
+                        function
+                        | :? AssemblyReferenceNode as arn -> Some arn.Url
+                        | _ -> None
+                        )
+                    |> Array.ofSeq
                 // This object is thread-safe
                 { new Microsoft.VisualStudio.FSharp.LanguageService.IProjectSite with
                     member ips.SourceFilesOnDisk() = compileItems
@@ -1496,9 +1540,13 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                     member ips.ErrorListTaskReporter() = taskReporter
                     member this.AdviseProjectSiteChanges(_,_) = ()
                     member this.AdviseProjectSiteCleaned(_,_) = ()
+                    member this.AdviseProjectSiteClosed(_,_) = ()
                     member this.IsIncompleteTypeCheckEnvironment = false
                     member this.TargetFrameworkMoniker = targetFrameworkMoniker
+                    member this.ProjectGuid = x.GetProjectGuid()
                     member this.LoadTime = creationTime
+                    member this.ProjectProvider = Some (x :> IProvideProjectSite)
+                    member this.AssemblyReferences() = assemblyReferences
                 }
 
             // let the language service ask us questions
@@ -1584,7 +1632,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                     // in the registry hive so that more editors can be added without changing this part of the
                     // code. FSharp only makes usage of one Editor Factory and therefore we will return 
                     // that guid
-                    guidEditorType <- GuidList.guidEditorFactory
+                    guidEditorType <- new Guid(FSharpConstants.editorFactoryGuidString)
                     VSConstants.S_OK
 
             interface IVsProjectSpecificEditorMap2 with 
@@ -1598,7 +1646,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                     // in the registry hive so that more editors can be added without changing this part of the
                     // code. FSharp only makes usage of one Editor Factory and therefore we will return 
                     // that guid
-                    guidEditorType <- GuidList.guidEditorFactory
+                    guidEditorType <- new Guid(FSharpConstants.editorFactoryGuidString)
                     VSConstants.S_OK
 
                 member x.GetSpecificLanguageService(_mkDocument:string, guidLanguageService:byref<Guid> ) =
@@ -1608,6 +1656,11 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 member x.SetSpecificEditorProperty(_mkDocument:string, _propid:int, _value:obj ) =
                     VSConstants.E_NOTIMPL
             end
+        
+    type internal ActiveCfgBatchUpdateState =
+        | NonBatch
+        | BatchWaiting
+        | BatchDone
 
     // Why is this a separate class, rather than an interface implemented on
     // FSharpProjectNode?  Because, at the time of initial registration of this
@@ -1618,7 +1671,15 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
     // class means we have a separate object to CCW wrap, avoiding the problematic
     // "double CCW-wrapping" of the same object.
     type internal SolutionEventsListener(projNode) =
-            let mutable queuedWork : option<list<FSharpProjectNode>> = None
+
+            static let mutable waitDialog : IDisposable option = None
+            static let mutable waitCount = 0
+
+            // During batch active project configuration changes, make sure we only run CSAF once
+            // per batch. Before this change, OnActiveProjectCfgChange was being called twice per
+            // batch per project.
+            let mutable batchState = NonBatch
+   
             // The CCW wrapper seems to prevent an object-identity test, so we determine whether
             // two IVsHierarchy objects are equal by comparing their captions.  (It's ok if this
             // occasionally yields false positives, as this just means we may do a little extra
@@ -1633,65 +1694,172 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                         o :?> System.String
                     else
                         null : System.String
-            let OnActiveProjectCfgChange(pIVsHierarchy) =
-                if GetCaption(pIVsHierarchy) = GetCaption(projNode.InteropSafeIVsHierarchy) then
-                    projNode.SetProjectFileDirty(projNode.IsProjectFileDirty)
-                    projNode.ComputeSourcesAndFlags() // REVIEW: It looks like ComputeSourcesAndFlags is called twice. Once on this line and then again because it is added to 'queuedWork' below.
-                    match queuedWork with
-                    | Some(l) -> queuedWork <- Some( projNode :: l )
-                    | None -> ()
-                VSConstants.S_OK
+
             let UpdateConfig(pHierProj) =
-                // By default, the F# project system keeps its own internal Configuration and Platform in sync with the current active
-                // Configuration and Platform by listening for OnActiveProjectCfgChange events.  However there is one case where the
-                // active cfg changes without an event, and this is during 'Batch Build'.  So we listen for the start and end of 
-                // Batch Build, and manually update the project to the active cfg before/after to set/reset the config.
+                // Check we're referring to the current project
                 if GetCaption(pHierProj) = GetCaption(projNode.InteropSafeIVsHierarchy) then
-                    // This code matches what ProjectNode.SetConfiguration would do; that method cannot be called during a build, but at this
-                    // current moment in time, it is 'safe' to do this update.
+                    // This code matches what ProjectNode.SetConfiguration would do.
                     let _,currentConfigName = Utilities.TryGetActiveConfigurationAndPlatform(projNode.Site, projNode.ProjectIDGuid)
                     MSBuildProject.SetGlobalProperty(projNode.BuildProject, ProjectFileConstants.Configuration, currentConfigName.ConfigName)
                     MSBuildProject.SetGlobalProperty(projNode.BuildProject, ProjectFileConstants.Platform, currentConfigName.MSBuildPlatform)
                     projNode.UpdateMSBuildState()
+
+            // The following event sequences are observed in Visual Studio 2017, see https://github.com/Microsoft/visualfsharp/pull/3025#pullrequestreview-38005713
+            //
+            // Loading tests\projects\misc\TestProjectChanges.sln:
+            //
+            // - OnActiveProjectCfgChangeBatchBegin x 3 (one for each project)
+            // - IVsUpdateSolutionEvents.OnActiveProjectCfgChange(null) x 3
+            // - IVsUpdateSolutionEvents.OnActiveProjectCfgChange(not-null) x 6
+            // - OnActiveProjectCfgChangeBatchEnd x 3 
+            //
+            //   Then we get a "duplicate" set of Batch events
+            // 
+            // - OnActiveProjectCfgChangeBatchBegin x 3
+            // - OnActiveProjectCfgChangeBatchEnd x 3 
+            //
+            // Switching to "Release"
+            // - OnBeforeActiveSolutionCfgChange x 3
+            // - OnActiveProjectCfgChangeBatchBegin x 3
+            // - IVsUpdateSolutionEvents.OnActiveProjectCfgChange(null) x 3
+            // - IVsUpdateSolutionEvents.OnActiveProjectCfgChange(not-null) x 6
+            // - OnActiveProjectCfgChangeBatchEnd x 3 
+            // - OnAfterActiveSolutionCfgChange x 3 
+            //
+            // On prompted solution reload after a project file has been edited
+            // - OnActiveProjectCfgChangeBatchBegin x 3
+            // - IVsUpdateSolutionEvents.OnActiveProjectCfgChange(null) x 3
+            // - IVsUpdateSolutionEvents.OnActiveProjectCfgChange(not-null) x 6
+            // - OnActiveProjectCfgChangeBatchEnd x 3 
+            // 
+            // Then we get a "duplicate" set of Batch events
+            // 
+            // - OnActiveProjectCfgChangeBatchBegin x 3
+            // - OnActiveProjectCfgChangeBatchEnd x 3 
+            //
+            // On individual project reload:
+            // - OnActiveProjectCfgChange
+            //
+            // On batch build:
+            // - UpdateProjectCfg_Begin x 6 (twice for each project!)
+            // - UpdateProjectCfg_Done x 6 (twice for each project!)
+            //
+            // We never see these being called in the scenarios I've tested - if you know a sequence that triggers them please let us know
+            // - IVsUpdateSolutionEvents2.OnActiveProjectCfgChange
+            // - IVsUpdateSolutionEvents2.UpdateProjectCfg_Begin
+            // - IVsUpdateSolutionEvents2.UpdateProjectCfg_Done
+            //
+            // Placing the call to ComputeSourcesAndFlags in OnAfterActiveSolutionCfgChange appears to be 
+            // sufficient to ensure consistent update. Note that we can only call ComputeSourcesAndFlags 
+            // after UpdateMSBuildState has been called for each project.
+
+
             interface IVsUpdateSolutionEvents with
                 member x.UpdateSolution_Begin(pfCancelUpdate) =
                     VSConstants.S_OK
+
                 member x.UpdateSolution_Done(_fSucceeded, _fModified, _fCancelCommand) =
                     VSConstants.S_OK
+
                 member x.UpdateSolution_StartUpdate(pfCancelUpdate) =
                     VSConstants.S_OK
+
                 member x.UpdateSolution_Cancel() =
                     VSConstants.S_OK
-                member x.OnActiveProjectCfgChange(pIVsHierarchy) =
-                    OnActiveProjectCfgChange(pIVsHierarchy)
+
+                member x.OnActiveProjectCfgChange(pHierProj) =
+                    UpdateConfig(pHierProj)
+                    VSConstants.S_OK
+
             interface IVsUpdateSolutionEvents2 with
                 member x.UpdateSolution_Begin(pfCancelUpdate) =
                     VSConstants.S_OK
+
                 member x.UpdateSolution_Done(_fSucceeded, _fModified, _fCancelCommand) =
                     VSConstants.S_OK
+
                 member x.UpdateSolution_StartUpdate(pfCancelUpdate) =
                     VSConstants.S_OK
+
                 member x.UpdateSolution_Cancel() =
                     VSConstants.S_OK
-                member x.OnActiveProjectCfgChange(pIVsHierarchy) =
-                    OnActiveProjectCfgChange(pIVsHierarchy)
+
+                // NOTE: we don't see this being called in any known scenarios
+                member x.OnActiveProjectCfgChange(pHierProj) =
+                    UpdateConfig(pHierProj)
+                    VSConstants.S_OK
+
+                // NOTE: this is called for batch build (Build --> Batch Build)
                 member x.UpdateProjectCfg_Begin(pHierProj, _pCfgProj, _pCfgSln, _dwAction, pfCancel) =
                     UpdateConfig(pHierProj)
                     VSConstants.S_OK
+
+                // NOTE: this is called for batch build (Build --> Batch Build)
                 member x.UpdateProjectCfg_Done(pHierProj, _pCfgProj, _pCfgSln, _dwAction, _fSuccess, _fCancel) =
                     UpdateConfig(pHierProj)
                     VSConstants.S_OK
+
             interface IVsUpdateSolutionEvents3 with
+
                 member x.OnBeforeActiveSolutionCfgChange(_oldCfg, _newCfg) =
-                    queuedWork <- Some( [] )
-                    VSConstants.S_OK
-                member x.OnAfterActiveSolutionCfgChange(_oldCfg, _newCfg) =
-                    match queuedWork with
-                    | Some(l) -> l |> List.iter (fun projNode -> projNode.ComputeSourcesAndFlags())
-                    | None -> ()
-                    queuedWork <- None
+
+                    // this will be called for each project, but wait dialogs cannot 'stack'
+                    // i.e. if a wait dialog is already open, subsequent calls to StartWaitDialog
+                    // will not override the current open dialog
+                    if waitCount = 0 then 
+                        waitDialog <-
+                            {
+                                WaitCaption = FSharpSR.GetString FSharpSR.ProductName
+                                WaitMessage = FSharpSR.GetString FSharpSR.UpdatingSolutionConfiguration
+                                ProgressText = None
+                                StatusBmpAnim = null
+                                StatusBarText = None
+                                DelayToShowDialogSecs = 1
+                                IsCancelable = false
+                                ShowMarqueeProgress = true
+                            }
+                            |> WaitDialog.start projNode.Site
+                            |> Some
+                    waitCount <- waitCount + 1
                     VSConstants.S_OK
 
+                member x.OnAfterActiveSolutionCfgChange(_oldCfg, _newCfg) =
+
+                    try 
+                        Debug.Assert((batchState = NonBatch), "We expect the group of project config updates to be over by the time we update the flags") // We only update flags after all the batch updates are done
+                        projNode.SetProjectFileDirty(projNode.IsProjectFileDirty)
+                        projNode.ComputeSourcesAndFlags()
+                    with e -> 
+                        Debug.Assert(false, sprintf "unexpected exception in ComputeSourcesAndFlags: %s" (e.ToString()))
+
+                    waitCount <- max 0 (waitCount - 1)
+                    if waitCount = 0 then 
+                        match waitDialog with
+                        | Some x ->
+                            x.Dispose()
+                            waitDialog <- None
+                        | None -> ()
+                    VSConstants.S_OK
+              
+            interface IVsUpdateSolutionEvents4 with
+
+                // Note, this use of the word "batch" is not the same as a "batch build" - it means "update a number of project configurations as a group"
+                member x.OnActiveProjectCfgChangeBatchBegin() =
+                    batchState <- BatchWaiting
+
+                member x.OnActiveProjectCfgChangeBatchEnd() =
+                    batchState <- NonBatch
+
+                member x.UpdateSolution_BeginFirstUpdateAction() =
+                    ()
+                member x.UpdateSolution_BeginUpdateAction(_dwAction) =
+                    ()
+                member x.UpdateSolution_EndLastUpdateAction() =
+                    ()
+                member x.UpdateSolution_EndUpdateAction(_dwAction) =
+                    ()
+                member x.UpdateSolution_QueryDelayFirstUpdateAction(_pfDelay) =
+                    ()
 
             interface IVsTrackProjectRetargetingEvents with
                 override this.OnRetargetingBeforeChange
@@ -1798,7 +1966,6 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 let oldValue = this.TargetFrameworkMoniker
                 if not (String.Equals(oldValue, value, StringComparison.OrdinalIgnoreCase)) then
                     if not (Utilities.IsInAutomationFunction(node.Site)) then
-#if FX_ATLEAST_45
                         let newFrameworkName = System.Runtime.Versioning.FrameworkName(value)
                         // Silverlight projects in Dev11 support only Silverlight 5
                         if newFrameworkName.Identifier = "Silverlight" && newFrameworkName.Version.Major <> 5 then 
@@ -1810,7 +1977,6 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                                     OLEMSGICON.OLEMSGICON_INFO, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST
                                 ) |> ignore
                             Marshal.ThrowExceptionForHR(VSConstants.OLE_E_PROMPTSAVECANCELLED)
-#endif
                         let result =
                             VsShellUtilities.ShowMessageBox(node.Site, FSharpSR.GetStringWithCR(FSharpSR.NeedReloadToChangeTargetFx), 
                                                         null,
@@ -1889,32 +2055,128 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
             inherit FolderNode(root, relativePath, projectElement)
 
             override x.QueryStatusOnNode(guidCmdGroup:Guid, cmd:uint32, pCmdText:IntPtr, result:byref<QueryStatusResult>) =
+                
+                let accessor = x.ProjectMgr.Site.GetService(typeof<SVsBuildManagerAccessor>) :?> IVsBuildManagerAccessor
+                let noBuildInProgress = not(VsBuildManagerAccessorExtensionMethods.IsInProgress(accessor))
+
                 if (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
-                   (cmd = (uint32)VSProjectConstants.MoveUpCmd.ID) then
-                        result <- result ||| QueryStatusResult.SUPPORTED
-                        if FSharpFileNode.CanMoveUp(x) then
-                            result <- result ||| QueryStatusResult.ENABLED
-                        VSConstants.S_OK
+                    (cmd = (uint32)VSProjectConstants.MoveUpCmd.ID) then
+
+                    result <- result ||| QueryStatusResult.SUPPORTED
+                    if noBuildInProgress && root.GetSelectedNodes().Count < 2 && FSharpFileNode.CanMoveUp(x) then
+                        result <- result ||| QueryStatusResult.ENABLED
+                    VSConstants.S_OK
+
                 elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
-                   (cmd = (uint32)VSProjectConstants.MoveDownCmd.ID) then
-                        result <- result ||| QueryStatusResult.SUPPORTED
-                        if FSharpFileNode.CanMoveDown(x) then
-                            result <- result ||| QueryStatusResult.ENABLED
-                        VSConstants.S_OK
+                    (cmd = (uint32)VSProjectConstants.MoveDownCmd.ID) then
+
+                    result <- result ||| QueryStatusResult.SUPPORTED
+                    if noBuildInProgress && root.GetSelectedNodes().Count < 2 && FSharpFileNode.CanMoveDown(x) then
+                        result <- result ||| QueryStatusResult.ENABLED
+                    VSConstants.S_OK
+
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.AddExistingItemAbove.ID) then
+
+                    result <- result ||| QueryStatusResult.SUPPORTED
+                    if noBuildInProgress && root.GetSelectedNodes().Count < 2 then
+                        result <- result ||| QueryStatusResult.ENABLED
+                    VSConstants.S_OK
+
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.AddNewItemAbove.ID) then
+
+                    result <- result ||| QueryStatusResult.SUPPORTED
+                    if noBuildInProgress && root.GetSelectedNodes().Count < 2 then
+                        result <- result ||| QueryStatusResult.ENABLED
+                    VSConstants.S_OK
+                        
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.AddExistingItemBelow.ID) then
+
+                    result <- result ||| QueryStatusResult.SUPPORTED
+                    if noBuildInProgress && root.GetSelectedNodes().Count < 2 then
+                        result <- result ||| QueryStatusResult.ENABLED
+                    VSConstants.S_OK
+
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.AddNewItemBelow.ID) then
+
+                    result <- result ||| QueryStatusResult.SUPPORTED
+                    if noBuildInProgress && root.GetSelectedNodes().Count < 2 then
+                        result <- result ||| QueryStatusResult.ENABLED
+                    VSConstants.S_OK
+
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.NewFolderAbove.ID) then
+
+                    result <- result ||| QueryStatusResult.SUPPORTED
+                    if noBuildInProgress && root.GetSelectedNodes().Count < 2 then
+                        result <- result ||| QueryStatusResult.ENABLED
+                    VSConstants.S_OK
+
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.NewFolderBelow.ID) then
+
+                    result <- result ||| QueryStatusResult.SUPPORTED
+                    if noBuildInProgress && root.GetSelectedNodes().Count < 2 then
+                        result <- result ||| QueryStatusResult.ENABLED
+                    VSConstants.S_OK
+
                 else
-                        base.QueryStatusOnNode(guidCmdGroup, cmd, pCmdText, &result)
+                    base.QueryStatusOnNode(guidCmdGroup, cmd, pCmdText, &result)
 
             override x.ExecCommandOnNode(guidCmdGroup:Guid, cmd:uint32, nCmdexecopt:uint32, pvaIn:IntPtr, pvaOut:IntPtr ) =
                 if (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
-                   (cmd = (uint32)VSProjectConstants.MoveUpCmd.ID) then 
-                       FSharpFileNode.MoveUp(x, root)
-                       VSConstants.S_OK
+                    (cmd = (uint32)VSProjectConstants.MoveUpCmd.ID) then 
+                    FSharpFileNode.MoveUp(x, root)
+                    VSConstants.S_OK
+
                 elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
-                   (cmd = (uint32)VSProjectConstants.MoveDownCmd.ID) then 
-                       FSharpFileNode.MoveDown(x, root)
-                       VSConstants.S_OK
+                    (cmd = (uint32)VSProjectConstants.MoveDownCmd.ID) then 
+                    FSharpFileNode.MoveDown(x, root)
+                    VSConstants.S_OK
+
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.AddNewItemAbove.ID) then 
+                    let result = root.MoveNewlyAddedFileAbove (x, fun () ->
+                        x.Parent.AddItemToHierarchy(HierarchyAddType.AddNewItem))
+                    root.EnsureMSBuildAndSolutionExplorerAreInSync()
+                    result
+                        
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.AddExistingItemAbove.ID) then 
+                    let result = root.MoveNewlyAddedFileAbove (x, fun () ->
+                        x.Parent.AddItemToHierarchy(HierarchyAddType.AddExistingItem))
+                    root.EnsureMSBuildAndSolutionExplorerAreInSync()
+                    result
+                        
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.AddNewItemBelow.ID) then 
+                    let result = root.MoveNewlyAddedFileBelow (x, fun () ->
+                        x.Parent.AddItemToHierarchy(HierarchyAddType.AddNewItem))
+                    root.EnsureMSBuildAndSolutionExplorerAreInSync()
+                    result
+                        
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.AddExistingItemBelow.ID) then 
+                    let result = root.MoveNewlyAddedFileBelow (x, fun () ->
+                        x.Parent.AddItemToHierarchy(HierarchyAddType.AddExistingItem))
+                    root.EnsureMSBuildAndSolutionExplorerAreInSync()
+                    result
+                    
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.NewFolderAbove.ID) then 
+
+                    x.Parent.AddNewFolder(fun newNode -> FSharpFileNode.MoveTo(Above, x, newNode))
+
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.NewFolderBelow.ID) then 
+                    
+                    x.Parent.AddNewFolder(fun newNode -> FSharpFileNode.MoveTo(Below, x, newNode))
+
                 else
-                        base.ExecCommandOnNode(guidCmdGroup, cmd, nCmdexecopt, pvaIn, pvaOut)
+                    base.ExecCommandOnNode(guidCmdGroup, cmd, nCmdexecopt, pvaIn, pvaOut)
             
     type internal FSharpBuildAction =
        | None = 0
@@ -1978,7 +2240,10 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
             if (not(fileNameEditable) && (propertyDescriptor.Name = "FileName"))
             then Microsoft.VisualStudio.Editors.PropertyPages.FilteredObjectWrapper.ReadOnlyPropertyDescriptorWrapper(propertyDescriptor) :> PropertyDescriptor
             else base.CreateDesignPropertyDescriptor(propertyDescriptor)
-
+       
+    type internal InsertionLocation =
+    | Above
+    | Below
 
     /// Represents most (non-reference) nodes in the solution hierarchy of an F# project (e.g. foo.fs, bar.fsi, app.config)
     type internal FSharpFileNode(root:FSharpProjectNode, e:ProjectElement, hierarchyId) = 
@@ -2009,6 +2274,18 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 let sp = new Microsoft.VisualStudio.Shell.ServiceProvider(iOle)
 
                 Some(new SelectionElementValueChangedListener(sp))
+
+            /// Unlink a node from its siblings.
+            static let unlinkFromSiblings (node : HierarchyNode) =
+                match node.PreviousSibling with
+                | null ->
+                    node.Parent.FirstChild <- node.NextSibling
+                | previous ->
+                    previous.NextSibling <- node.NextSibling
+                if node.Parent.LastChild = node then
+                    node.Parent.LastChild <- node.PreviousSibling
+                node.NextSibling <- null
+                node.OnItemDeleted()
 
             do selectionChangedListener.Value.Init()
                         
@@ -2085,16 +2362,19 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                     base.Dispose(disposing)                
 
             override x.ImageIndex =
-                    if (x.IsFormSubType) then 
-                        int32 ProjectNode.ImageName.WindowsForm
-                    elif (FSharpProjectNode.IsFSharpCodeFileIconwise(x.FileName)) then 
-                        FSharpProjectNode.ImageOffset + int32 FSharpImageName.FsFile
-                    elif (FSharpProjectNode.IsFSharpSignatureFileIconwise(x.FileName)) then 
-                        FSharpProjectNode.ImageOffset + int32 FSharpImageName.FsiFile
-                    elif (FSharpProjectNode.IsFSharpScriptFileIconwise(x.FileName)) then 
-                        FSharpProjectNode.ImageOffset + int32 FSharpImageName.FsxFile
-                    else
-                        base.ImageIndex
+                // Check if the file is there.
+                if not (x.CanShowDefaultIcon()) then
+                    int ProjectNode.ImageName.MissingFile
+                elif x.IsFormSubType then 
+                    int ProjectNode.ImageName.WindowsForm
+                elif (FSharpProjectNode.IsFSharpCodeFileIconwise(x.FileName)) then 
+                    FSharpProjectNode.ImageOffset + int FSharpImageName.FsFile
+                elif (FSharpProjectNode.IsFSharpSignatureFileIconwise(x.FileName)) then 
+                    FSharpProjectNode.ImageOffset + int FSharpImageName.FsiFile
+                elif (FSharpProjectNode.IsFSharpScriptFileIconwise(x.FileName)) then 
+                    FSharpProjectNode.ImageOffset + int FSharpImageName.FsxFile
+                else
+                    base.ImageIndex
 
             /// Open a file depending on the SubType property associated with the file item in the project file
             override x.DoDefaultAction() =
@@ -2102,9 +2382,8 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 Debug.Assert(manager <> null, "Could not get the FileDocumentManager")
 
                 let viewGuid = (if x.IsFormSubType then VSConstants.LOGVIEWID_Designer else VSConstants.LOGVIEWID_Primary)
-                let fallbackViewGuid = (if x.IsFormSubType then VSConstants.LOGVIEWID_Primary else VSConstants.LOGVIEWID_Designer)
                 let mutable frame : IVsWindowFrame = null
-                manager.Open(false, false, viewGuid, fallbackViewGuid, &frame, WindowFrameShowAction.Show) |> ignore
+                manager.Open(false, false, viewGuid, &frame, WindowFrameShowAction.Show) |> ignore
 
             /// In solution explorer, move the last of my siblings to just above me, return the moved FSharpFileNode
             static member MoveLastToAbove(target : HierarchyNode, root : FSharpProjectNode) : FSharpFileNode =
@@ -2151,44 +2430,116 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 lastNode.NextSibling <- tmp
                 root.OnItemAdded(lastNode.Parent, lastNode)
                 lastNode :?> FSharpFileNode
+            
+            /// Move a node to above/below the 'target node' in the hierarchy.
+            /// If it is not valid for the node to be directly below the 'target node',
+            /// a warning dialog will be shown.
+            static member MoveTo(location : InsertionLocation, targetNode : HierarchyNode, nodeToBeMoved : HierarchyNode) : unit =
+                let root = nodeToBeMoved.ProjectMgr
+                Debug.Assert(targetNode.ProjectMgr = nodeToBeMoved.ProjectMgr)
 
+                // if targetNode and nodeToBeMoved are not siblings, try to find
+                // the (grand)parent of nodeToBeMoved that is a sibling
+                let rec tryFindTargetNodeSibling =
+                    function
+                    | (null : HierarchyNode) ->
+                        None
+                    | node when node.Parent = targetNode.Parent ->
+                        Some node
+                    | node ->
+                        tryFindTargetNodeSibling node.Parent
+                   
+                let isFileNode : HierarchyNode -> bool =
+                    function
+                    | :? FSharpFileNode -> true
+                    | _ -> false
+                
+                match tryFindTargetNodeSibling nodeToBeMoved with
+                | Some siblingNode when siblingNode <> nodeToBeMoved ->
+                    let fileChildren = siblingNode.AllDescendants |> Seq.filter isFileNode |> List.ofSeq
+                    if fileChildren = [nodeToBeMoved] then
+                        Ok siblingNode
+                    else
+                        Error <| String.Format(FSharpSR.GetString(FSharpSR.FileCannotBePlacedMultipleFiles), siblingNode.VirtualNodeName)
+                | Some siblingNode ->
+                    Ok siblingNode
+                | None ->
+                    Error <| FSharpSR.GetString(FSharpSR.FileCannotBePlacedDifferentSubtree)
+                |> function
+                | Ok node ->
+                    unlinkFromSiblings node
+
+                    match location with
+                    | Above ->
+                        match targetNode.PreviousSibling with
+                        | null -> targetNode.Parent.FirstChild <- node
+                        | prev -> prev.NextSibling <- node
+
+                        node.NextSibling <- targetNode
+                    | Below ->
+                        match targetNode.NextSibling with
+                        | null -> targetNode.Parent.LastChild <- node
+                        | next -> node.NextSibling <- next
+                        
+                        targetNode.NextSibling <- node
+                        
+                    root.OnItemAdded(node.Parent, node)
+                | Error message ->
+                    // If it is not called from an automation method show a dialog box
+                    if Utilities.IsInAutomationFunction(root.Site) then
+                        raise <| InvalidOperationException message
+                    else
+                        let title = null
+                        let icon = OLEMSGICON.OLEMSGICON_WARNING
+                        let buttons = OLEMSGBUTTON.OLEMSGBUTTON_OK
+                        let defaultButton = OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST
+
+                        let relPath = PackageUtilities.MakeRelativeIfRooted(nodeToBeMoved.Url, root.BaseURI)
+                        let relTargetPath = PackageUtilities.MakeRelativeIfRooted(targetNode.Url, root.BaseURI)
+
+                        let bodyString =
+                            match location with
+                            | Above -> FSharpSR.FileCannotBePlacedBodyAbove
+                            | Below -> FSharpSR.FileCannotBePlacedBodyBelow
+                            |> FSharpSR.GetStringWithCR
+
+                        let entireMessage = String.Format(bodyString, relPath, relTargetPath, message)
+                        VsShellUtilities.ShowMessageBox(root.Site, title, entireMessage, icon, buttons, defaultButton) |> ignore
+            
+            /// Move the node to the bottom of its subfolder within the Solution Explorer.
+            /// If its directory hierarchy does not exist, create it.
+            static member MoveToBottomOfGroup(node : HierarchyNode) : unit =
+                match node with
+                | :? FSharpFileNode as fileNode ->
+                    let root = fileNode.ProjectMgr
+
+                    unlinkFromSiblings fileNode
+                    
+                    let rec tryFindAdoptiveParent (currentPath : string list, remainingPath : string list, currentParent : HierarchyNode) =
+                        match remainingPath with
+                        | [] ->
+                            currentParent
+                        | folderName::restPath ->
+                            let path = currentPath @ [folderName]
+                            let pathStr = String.concat "\\" path
+                            let folderNode = root.VerifySubFolderExists(pathStr + "\\", currentParent)
+                            tryFindAdoptiveParent (path, restPath, folderNode)
+                    
+                    let pathParts = Path.GetDirectoryName(fileNode.RelativeFilePath).Split([| Path.DirectorySeparatorChar |], StringSplitOptions.RemoveEmptyEntries)
+                    let parent = tryFindAdoptiveParent ([], List.ofArray pathParts, root)
+                    parent.AddChild(fileNode)
+                | _ ->
+                    Debug.Assert(false, sprintf "Unable to find FSharpFileNode '%s'" node.Url)
+            
             override x.ExecCommandOnNode(guidCmdGroup:Guid, cmd:uint32, nCmdexecopt:uint32, pvaIn:IntPtr, pvaOut:IntPtr ) =
                 Debug.Assert(x.ProjectMgr <> null, "The FSharpFileNode has no project manager")
 
                 let completeRenameIfNecessary() = 
-#if FX_ATLEAST_45
-                    let tree = 
-                        match UIHierarchyUtilities.GetUIHierarchyWindow(root.Site, HierarchyNode.SolutionExplorer) with
-                        | :? Microsoft.VisualStudio.PlatformUI.SolutionNavigatorPane as snp ->
-                            match snp.Navigator with 
-                            | null -> null 
-                            | n -> 
-                                match n.TreeView with 
-                                | null -> null
-                                | t -> t
-                        | _ -> null
-                    if tree <> null && tree.IsInRenameMode then
-                        let id = x.ID
-                        let oldName = x.GetEditLabel()
-                        // if tree is in rename mode now - commit renaming
-                        // since rename is implemented via remove\add set of operations - after renaming we need to fetch node that corresponds to the current one
-
-                        // rename may fail (i.e if new name contains invalid characters), in this case user will see error message and after that failure will be swallowed
-                        // if this happens - we need to cancel current transaction,
-                        // otherwise it will hold current hierarchy node. After move operation is completed - current node will become invalid => may lead to ObjectDisposedExceptions.
-                        // Since error is not appear directly in the code - we check if old and new labels match and if yes - treat it as reason that error happens
-                        tree.CommitRename(Microsoft.Internal.VisualStudio.PlatformUI.RenameItemCompletionFocusBehavior.Refocus)
-                        
-                        let node = root.ItemIdMap.[id] :?> FSharpFileNode
-                        if node.GetEditLabel() = oldName then
-                            tree.CancelRename(Microsoft.Internal.VisualStudio.PlatformUI.RenameItemCompletionFocusBehavior.Refocus)
-                        node
-                    else
-                        x
-#else
-                    x
-#endif
-                
+                    match SolutionPaneUtil.TryRenameAndReturnNode 
+                            (root, HierarchyNode.SolutionExplorer, x.ID, fun()-> x.GetEditLabel()) with
+                    | null -> x
+                    | node -> node :?> FSharpFileNode
+             
                 if (x.ProjectMgr= null) then 
                     raise <| InvalidOperationException()
 
@@ -2209,30 +2560,41 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
                    (cmd = (uint32)VSProjectConstants.AddNewItemAbove.ID) then 
                         let result = root.MoveNewlyAddedFileAbove (x, fun () ->
-                            root.AddItemToHierarchy(HierarchyAddType.AddNewItem))
+                            x.AddItemToHierarchy(HierarchyAddType.AddNewItem))
                         root.EnsureMSBuildAndSolutionExplorerAreInSync()
                         result
                         
                 elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
                    (cmd = (uint32)VSProjectConstants.AddExistingItemAbove.ID) then 
                         let result = root.MoveNewlyAddedFileAbove (x, fun () ->
-                            root.AddItemToHierarchy(HierarchyAddType.AddExistingItem))
+                            x.AddItemToHierarchy(HierarchyAddType.AddExistingItem))
                         root.EnsureMSBuildAndSolutionExplorerAreInSync()
                         result
                         
                 elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
                    (cmd = (uint32)VSProjectConstants.AddNewItemBelow.ID) then 
                         let result = root.MoveNewlyAddedFileBelow (x, fun () ->
-                            root.AddItemToHierarchy(HierarchyAddType.AddNewItem))
+                            x.AddItemToHierarchy(HierarchyAddType.AddNewItem))
                         root.EnsureMSBuildAndSolutionExplorerAreInSync()
                         result
                         
                 elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
                    (cmd = (uint32)VSProjectConstants.AddExistingItemBelow.ID) then 
                         let result = root.MoveNewlyAddedFileBelow (x, fun () ->
-                            root.AddItemToHierarchy(HierarchyAddType.AddExistingItem))
+                            x.AddItemToHierarchy(HierarchyAddType.AddExistingItem))
                         root.EnsureMSBuildAndSolutionExplorerAreInSync()
                         result
+
+                    
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.NewFolderAbove.ID) then 
+                    
+                    x.Parent.AddNewFolder(fun newNode -> FSharpFileNode.MoveTo(Above, x, newNode))
+
+                elif (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.NewFolderBelow.ID) then 
+
+                    x.Parent.AddNewFolder(fun newNode -> FSharpFileNode.MoveTo(Below, x, newNode))
                         
                 else
                     base.ExecCommandOnNode(guidCmdGroup, cmd, nCmdexecopt, pvaIn, pvaOut)
@@ -2240,23 +2602,19 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
             /// Handles the menuitems
             override x.QueryStatusOnNode(guidCmdGroup:Guid, cmd:uint32, pCmdText:IntPtr, result:byref<QueryStatusResult>) =
             
-#if FX_ATLEAST_45
                 let accessor = x.ProjectMgr.Site.GetService(typeof<SVsBuildManagerAccessor>) :?> IVsBuildManagerAccessor
                 let noBuildInProgress = not(VsBuildManagerAccessorExtensionMethods.IsInProgress(accessor))
-#else
-                let noBuildInProgress = not FSharpBuildStatus.IsInProgress 
-#endif
                       
                 match (cmd |> int32 |> enum) with 
                 //| VsCommands.Delete   // REVIEW needs work to implement: see e.g. RemoveFromProjectFile() RemoveItem() CanRemoveItems() CanDeleteItem() DeleteFromStorage()
-                | VsCommands.ViewCode when guidCmdGroup = VsMenus.guidStandardCommandSet97 -> 
+                | VSConstants.VSStd97CmdID.ViewCode when guidCmdGroup = VsMenus.guidStandardCommandSet97 -> 
                         
                         result <- result ||| QueryStatusResult.SUPPORTED
                         if noBuildInProgress then 
                             result <- result ||| QueryStatusResult.ENABLED
                         VSConstants.S_OK
                         
-                | VsCommands.ViewForm when guidCmdGroup = VsMenus.guidStandardCommandSet97 -> 
+                | VSConstants.VSStd97CmdID.ViewForm when guidCmdGroup = VsMenus.guidStandardCommandSet97 -> 
                         if (x.IsFormSubType) then 
                             result <- result ||| QueryStatusResult.SUPPORTED
                         if noBuildInProgress then 
@@ -2326,6 +2684,24 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                             result <- result ||| QueryStatusResult.ENABLED
                         VSConstants.S_OK
                         
+                | _ when 
+                    (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.NewFolderAbove.ID) ->
+
+                    result <- result ||| QueryStatusResult.SUPPORTED
+                    if noBuildInProgress && root.GetSelectedNodes().Count < 2 then
+                        result <- result ||| QueryStatusResult.ENABLED
+                    VSConstants.S_OK
+
+                | _ when 
+                    (guidCmdGroup = VSProjectConstants.guidFSharpProjectCmdSet) &&
+                    (cmd = (uint32)VSProjectConstants.NewFolderBelow.ID) ->
+
+                    result <- result ||| QueryStatusResult.SUPPORTED
+                    if noBuildInProgress && root.GetSelectedNodes().Count < 2 then
+                        result <- result ||| QueryStatusResult.ENABLED
+                    VSConstants.S_OK
+
                 | _ -> base.QueryStatusOnNode(guidCmdGroup, cmd, pCmdText, &result)
 
             static member CanMoveDown(node : HierarchyNode) =
@@ -2455,15 +2831,7 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
                 root.SetProjectFileDirty(true)
                 // Recompute & notify of changes
                 root.ComputeSourcesAndFlags()
-
-            member x.GetRelativePath() = 
-                let mutable relativePath = Path.GetFileName(x.ItemNode.GetMetadata(ProjectFileConstants.Include))
-                let mutable  parent = x.Parent
-                while (parent <> null && not (parent :? ProjectNode)) do
-                    relativePath <- Path.Combine(parent.Caption, relativePath)
-                    parent <- parent.Parent
-                relativePath
-
+                
             member x.ServiceCreator : OleServiceProvider.ServiceCreatorCallback =
                 new OleServiceProvider.ServiceCreatorCallback(x.CreateServices)
 
@@ -2522,4 +2890,5 @@ namespace rec Microsoft.VisualStudio.FSharp.ProjectSystem
             inherit SelectionListener(serviceProvider)
 
             override x.OnElementValueChanged(_elementid, _varValueOld, _varValueNew) = VSConstants.S_OK
+
 

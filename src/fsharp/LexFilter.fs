@@ -685,7 +685,7 @@ type LexFilterImpl (lightSyntaxStatus:LightSyntaxStatus, compilingFsLib, lexer, 
             | CtxtSeqBlock _, (CtxtElse _  :: (CtxtIf _ as limitCtxt) :: _rest) 
                       -> PositionWithColumn(limitCtxt.StartPos,limitCtxt.StartCol)
 
-            // Permitted inner-construct precise block alighnment: 
+            // Permitted inner-construct precise block alignment: 
             //           interface ...
             //           with ... 
             //           end 
@@ -773,14 +773,14 @@ type LexFilterImpl (lightSyntaxStatus:LightSyntaxStatus, compilingFsLib, lexer, 
                       -> PositionWithColumn(limitCtxt.StartPos,limitCtxt.StartCol + 1) 
 
             // Permitted inner-construct (e.g. "then" block and "else" block in overall 
-            // "if-then-else" block ) block alighnment: 
+            // "if-then-else" block ) block alignment: 
             //           if ... 
             //           then expr
             //           elif expr  
             //           else expr  
             | (CtxtIf   _ | CtxtElse _ | CtxtThen _), (CtxtIf _ as limitCtxt) :: _rest  
                       -> PositionWithColumn(limitCtxt.StartPos,limitCtxt.StartCol)
-            // Permitted inner-construct precise block alighnment: 
+            // Permitted inner-construct precise block alignment: 
             //           while  ... 
             //           do expr
             //           done   
@@ -1153,7 +1153,7 @@ type LexFilterImpl (lightSyntaxStatus:LightSyntaxStatus, compilingFsLib, lexer, 
         // Balancing rule. Every 'done' terminates all surrounding blocks up to a CtxtDo, and will be swallowed by 
         // terminating the corresponding CtxtDo in the rule below. 
         let tokenForcesHeadContextClosure token stack = 
-            nonNil stack &&
+            not (isNil stack) &&
             match token with 
             | Parser.EOF _ -> true
             | SEMICOLON_SEMICOLON  -> not (tokenBalancesHeadContext token stack) 

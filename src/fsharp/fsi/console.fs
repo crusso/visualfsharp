@@ -13,7 +13,7 @@ open Internal.Utilities
 /// Fixes to System.Console.ReadKey may break this code around, hence the option here.
 module internal ConsoleOptions =
 
-#if NO_WIN_REGISTRY
+#if FX_NO_WIN_REGISTRY
   let fixupRequired = false
 #else
   // Bug 4254 was fixed in Dev11 (Net4.5), so this flag tracks making this fix up version specific.
@@ -22,7 +22,7 @@ module internal ConsoleOptions =
 
   let fixNonUnicodeSystemConsoleReadKey = ref fixupRequired
   let readKeyFixup (c:char) =
-#if NO_SERVERCODEPAGES
+#if FX_NO_SERVERCODEPAGES
 #else
     if !fixNonUnicodeSystemConsoleReadKey then
       // Assumes the c:char is actually a byte in the System.Console.InputEncoding.
@@ -350,6 +350,11 @@ type internal ReadLineConsole() =
                 input.Remove(!current, 1) |> ignore;
                 render();
         
+        let deleteToEndOfLine() =
+            if (!current < input.Length) then
+                input.Remove (!current, input.Length - !current) |> ignore;
+                render();
+
         let insert(key: ConsoleKeyInfo) =
             // REVIEW: is this F6 rewrite required? 0x1A looks like Ctrl-Z.
             // REVIEW: the Ctrl-Z code is not recognised as EOF by the lexer.
@@ -411,6 +416,45 @@ type internal ReadLineConsole() =
                 current := input.Length;
                 (!anchor).PlaceAt(x.Inset,!rendered);
                 change()
+            | _ ->
+            match (key.Modifiers, key.KeyChar) with
+            // Control-A
+            | (ConsoleModifiers.Control, '\001') ->
+                current := 0;
+                (!anchor).PlaceAt(x.Inset,0)
+                change ()
+            // Control-E
+            | (ConsoleModifiers.Control, '\005') ->
+                current := input.Length;
+                (!anchor).PlaceAt(x.Inset,!rendered)
+                change ()
+            // Control-B
+            | (ConsoleModifiers.Control, '\002') ->
+                moveLeft()
+                change ()
+            // Control-f
+            | (ConsoleModifiers.Control, '\006') ->
+                moveRight()
+                change ()
+            // Control-k delete to end of line
+            | (ConsoleModifiers.Control, '\011') ->
+                deleteToEndOfLine()
+                change()
+            // Control-P
+            | (ConsoleModifiers.Control, '\016') ->
+                setInput(history.Previous());
+                change()
+            // Control-n
+            | (ConsoleModifiers.Control, '\014') ->
+                setInput(history.Next());
+                change()
+            // Control-d
+            | (ConsoleModifiers.Control, '\004') ->
+                if (input.Length = 0) then
+                    exit 0 //quit
+                else
+                    delete()
+                    change()
             | _ ->
                 // Note: If KeyChar=0, the not a proper char, e.g. it could be part of a multi key-press character,
                 //       e.g. e-acute is ' and e with the French (Belgium) IME and US Intl KB.

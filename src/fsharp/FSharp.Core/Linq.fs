@@ -4,7 +4,6 @@
 
 namespace Microsoft.FSharp.Linq
 
-#if FX_ATLEAST_LINQ
 
 open Microsoft.FSharp
 open Microsoft.FSharp.Collections
@@ -145,8 +144,7 @@ open System.Linq
 open System.Collections.Generic
 open System.Linq.Expressions
 open System.Reflection
-#if FX_NO_REFLECTION_EMIT
-#else
+#if !FX_NO_REFLECTION_EMIT
 open System.Reflection.Emit
 #endif
 open Microsoft.FSharp
@@ -229,8 +227,7 @@ module LeafExpressionConverter =
             match tm with
             | Call(obj,minfo2,args) 
                 when (
-#if FX_NO_REFLECTION_METADATA_TOKENS
-#else
+#if !FX_NO_REFLECTION_METADATA_TOKENS
                         minfo.MetadataToken = minfo2.MetadataToken &&
 #endif
                         if isg1 then minfo2.IsGenericMethod && gmd = minfo2.GetGenericMethodDefinition()
@@ -853,7 +850,10 @@ module LeafExpressionConverter =
     // provides no other way to evaluate the expression.
     //
     // REVIEW: It is possible it is just better to interpret the expression in many common cases, e.g. property-gets, values etc.
-    let EvaluateQuotation (e: Microsoft.FSharp.Quotations.Expr) = 
+    let EvaluateQuotation (e: Microsoft.FSharp.Quotations.Expr) : obj = 
+#if FX_NO_QUOTATIONS_COMPILE
+       raise (new NotSupportedException())
+#else
        match e with
        | Value (obj,_) -> obj
        | _ -> 
@@ -865,7 +865,6 @@ module LeafExpressionConverter =
            d.DynamicInvoke [| box () |]
        with :? System.Reflection.TargetInvocationException as exn -> 
            raise exn.InnerException
-
-
 #endif
+
     

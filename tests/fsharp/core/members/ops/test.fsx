@@ -1,11 +1,21 @@
 // #Conformance #MemberDefinitions #Overloading #ComputationExpressions 
+#if TESTS_AS_APP
+module Core_members_ops
+#endif
 
-open Microsoft.FSharp.Math
+let failures = ref []
 
-let failures = ref false
-let report_failure () = 
-  stderr.WriteLine " NO"; failures := true
-let test s b = stderr.Write(s:string);  if b then stderr.WriteLine " OK" else report_failure() 
+let report_failure (s : string) = 
+    stderr.Write" NO: "
+    stderr.WriteLine s
+    failures := !failures @ [s]
+
+let test (s : string) b = 
+    stderr.Write(s)
+    if b then stderr.WriteLine " OK"
+    else report_failure (s)
+
+let check s b1 b2 = test s (b1 = b2)
 
 module FuncTest = 
 
@@ -345,7 +355,13 @@ module MiscOperatorOverloadTests =
         res
 
 
+// See https://github.com/Microsoft/visualfsharp/issues/1306
+module OperatorConstraintsWithExplicitRigidTypeParameters = 
+    type M() = class end
 
+    let inline empty< ^R when ( ^R or  M) : (static member ( $ ) :  ^R *  M ->  ^R)> =        
+        let m = M()
+        Unchecked.defaultof< ^R> $ m: ^R
 
 module EnumerationOperatorTests = 
     let x1 : System.DateTimeKind =  enum 3
@@ -374,10 +390,36 @@ module TraitCallsAndConstructors =
      
     let _ : Inherited = -aInherited
 
+module CodeGenTraitCallWitnessesNotBeingInlined = 
+    // From: http://stackoverflow.com/questions/28243963/how-to-write-a-variadic-function-in-f-emulating-a-similar-haskell-solution/28244413#28244413
+    type T = T with
+        static member        ($) (T, _:int    ) = (+)
+        static member        ($) (T, _:decimal) = (+)       // required, if only the prev line is here, type inference will constrain too much
 
-let _ = 
-  if !failures then (stdout.WriteLine "Test Failed"; exit 1) 
-  else (stdout.WriteLine "Test Passed"; 
-        System.IO.File.WriteAllText("test.ok","ok"); 
-        exit 0)
+    [<AutoOpen>]
+    module TestT =
+        let inline sum (i:'a) (x:'a) :'r = (T $ Unchecked.defaultof<'r>) i x
+
+    type T with
+        static member inline ($) (T, _:'t-> 'rest) = fun (a:'t) x -> sum  (x + a)
+
+    module TestT2 =
+        let x:int = sum 2 3 
+        let y:int = sum 2 3 4       // this line was throwing TypeInitializationException in Debug build
+
+
+
+#if TESTS_AS_APP
+let RUN() = !failures
+#else
+let aa =
+  match !failures with 
+  | [] -> 
+      stdout.WriteLine "Test Passed"
+      System.IO.File.WriteAllText("test.ok","ok")
+      exit 0
+  | _ -> 
+      stdout.WriteLine "Test Failed"
+      exit 1
+#endif
 

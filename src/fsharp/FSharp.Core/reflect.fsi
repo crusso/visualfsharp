@@ -29,8 +29,7 @@ type UnionCaseInfo =
     /// <returns>An array of custom attributes.</returns>
     member GetCustomAttributes: attributeType:System.Type -> obj[]
 
-#if FX_NO_CUSTOMATTRIBUTEDATA
-#else
+#if !FX_NO_CUSTOMATTRIBUTEDATA
     /// <summary>Returns the custom attributes data associated with the case.</summary>
     /// <returns>An list of custom attribute data items.</returns>
     member GetCustomAttributesData: unit -> System.Collections.Generic.IList<CustomAttributeData>
@@ -71,8 +70,8 @@ type FSharpValue =
     /// <returns>A function to read the specified field from the record.</returns>
     static member PreComputeRecordFieldReader : info:PropertyInfo -> (obj -> obj)
 
-#if FX_RESHAPED_REFLECTION
-#else
+// These APIs are only internal for portable profile, 7,78 and 259 of FSHarp.Core.dll --- those profiles System.Reflection.BindingFlags
+#if !FX_NO_SYSTEM_BINDINGFLAGS
     /// <summary>Creates an instance of a record type.</summary>
     ///
     /// <remarks>Assumes the given input is a record type.</remarks>
@@ -264,8 +263,7 @@ type FSharpValue =
 /// <summary>Contains operations associated with constructing and analyzing F# types such as records, unions and tuples</summary>
 type FSharpType =
 
-#if FX_RESHAPED_REFLECTION
-#else
+#if !FX_NO_SYSTEM_BINDINGFLAGS
     /// <summary>Reads all the fields from a record value, in declaration order</summary>
     ///
     /// <remarks>Assumes the given input is a record value. If not, ArgumentException is raised.</remarks>
@@ -323,6 +321,16 @@ type FSharpType =
     /// <param name="types">An array of types for the tuple elements.</param>
     /// <returns>The type representing the tuple containing the input elements.</returns>
     static member MakeTupleType: types:Type[] -> Type
+
+    /// <summary>Returns a <c>System.Type</c> representing an F# tuple type with the given element types</summary>
+    /// <param name="types">An array of types for the tuple elements.</param>
+    /// <returns>The type representing the tuple containing the input elements.</returns>
+    static member MakeTupleType: asm:Assembly * types:Type[] -> Type
+
+    /// <summary>Returns a <c>System.Type</c> representing an F# struct tuple type with the given element types</summary>
+    /// <param name="types">An array of types for the tuple elements.</param>
+    /// <returns>The type representing the struct tuple containing the input elements.</returns>
+    static member MakeStructTupleType: asm:Assembly * types:Type[] -> Type
 
     /// <summary>Return true if the <c>typ</c> is a representation of an F# tuple type </summary>
     /// <param name="typ">The type to check.</param>
@@ -521,7 +529,7 @@ namespace Microsoft.FSharp.Reflection
 open Microsoft.FSharp.Core
 
 module internal ReflectionUtils = 
-#if FX_RESHAPED_REFLECTION
+#if FX_NO_SYSTEM_BINDINGFLAGS
     type BindingFlags = ReflectionAdapters.BindingFlags
 #else
     type BindingFlags = System.Reflection.BindingFlags

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
 
 /// Anything to do with special names of identifiers and other lexical rules 
-module internal Microsoft.FSharp.Compiler.Range
+module Microsoft.FSharp.Compiler.Range
 
 open System.IO
 open System.Collections.Generic
@@ -129,7 +129,7 @@ type FileIndexTable() =
 
 let maxFileIndex = pown32 fileIndexBitCount
 
-// ++GLOBAL MUTBALE STATE
+// ++GLOBAL MUTABLE STATE
 // WARNING: Global Mutable State, holding a mapping between integers and filenames
 let fileIndexTable = new FileIndexTable()
 
@@ -212,7 +212,7 @@ let rangeContainsPos (m1:range) p =
 let rangeBeforePos (m1:range) p =
     posGeq p m1.End
 
-let rangeN filename line =  mkRange filename (mkPos line 0) (mkPos line 80)
+let rangeN filename line = mkRange filename (mkPos line 0) (mkPos line 0)
 let pos0 = mkPos 1 0
 let range0 =  rangeN "unknown" 1
 let rangeStartup = rangeN "startup" 1

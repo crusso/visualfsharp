@@ -4,6 +4,7 @@ module internal Microsoft.FSharp.Compiler.Driver
 
 open Microsoft.FSharp.Compiler.Ast
 open Microsoft.FSharp.Compiler.AbstractIL.IL
+open Microsoft.FSharp.Compiler.AbstractIL.Internal.Library
 open Microsoft.FSharp.Compiler.AbstractIL
 open Microsoft.FSharp.Compiler.ErrorLogger
 open Microsoft.FSharp.Compiler.CompileOps
@@ -14,49 +15,79 @@ open Microsoft.FSharp.Compiler.TypeChecker
 [<AbstractClass>]
 type ErrorLoggerProvider =
     new : unit -> ErrorLoggerProvider
-    abstract CreateErrorLoggerThatQuitsAfterMaxErrors : tcConfigBuilder : TcConfigBuilder * exiter : Exiter -> ErrorLogger
+    abstract CreateErrorLoggerUpToMaxErrors : tcConfigBuilder : TcConfigBuilder * exiter : Exiter -> ErrorLogger
 
-#if NO_COMPILER_BACKEND
-#else
-
-type SigningInfo = SigningInfo of (* delaysign:*) bool * (* publicsign:*) bool * (*signer:*)  string option * (*container:*) string option
+type StrongNameSigningInfo 
 
 val EncodeInterfaceData: tcConfig:TcConfig * tcGlobals:TcGlobals * exportRemapping:Tastops.Remap * generatedCcu: Tast.CcuThunk * outfile: string * isIncrementalBuild: bool -> ILAttribute list * ILResource list
-val ValidateKeySigningAttributes : tcConfig:TcConfig * tcGlobals:TcGlobals * TypeChecker.TopAttribs -> SigningInfo
-val GetSigner : SigningInfo -> ILBinaryWriter.ILStrongNameSigner option
+val ValidateKeySigningAttributes : tcConfig:TcConfig * tcGlobals:TcGlobals * TypeChecker.TopAttribs -> StrongNameSigningInfo
+val GetStrongNameSigner : StrongNameSigningInfo -> ILBinaryWriter.ILStrongNameSigner option
 
-type ILResource with 
-    /// Read the bytes from a resource local to an assembly
-    member internal Bytes : byte[]
-
-/// Proccess the given set of command line arguments
-#if FX_LCIDFROMCODEPAGE
+/// Process the given set of command line arguments
 val internal ProcessCommandLineFlags : TcConfigBuilder * setProcessThreadLocals:(TcConfigBuilder -> unit) * lcidFromCodePage : int option * argv:string[] -> string list
-#else
-val internal ProcessCommandLineFlags : TcConfigBuilder * setProcessThreadLocals:(TcConfigBuilder -> unit) * argv:string[] -> string list
-#endif
 
 //---------------------------------------------------------------------------
 // The entry point used by fsc.exe
 
-val mainCompile : argv : string[] * bannerAlreadyPrinted : bool * exiter : Exiter -> unit
+val typecheckAndCompile : 
+    ctok: CompilationThreadToken *
+    argv : string[] * 
+    legacyReferenceResolver: ReferenceResolver.Resolver * 
+    bannerAlreadyPrinted : bool * 
+    openBinariesInMemory: bool * 
+    defaultCopyFSharpCore: bool * 
+    exiter : Exiter *
+    loggerProvider: ErrorLoggerProvider *
+    tcImportsCapture: (TcImports -> unit) option *
+    dynamicAssemblyCreator: (TcGlobals * string * ILModuleDef -> unit) option
+      -> unit
 
-//---------------------------------------------------------------------------
-// The micro API into the compiler used by the visualfsharp test infrastructure
+val mainCompile : 
+    ctok: CompilationThreadToken *
+    argv: string[] * 
+    legacyReferenceResolver: ReferenceResolver.Resolver * 
+    bannerAlreadyPrinted: bool * 
+    openBinariesInMemory: bool * 
+    defaultCopyFSharpCore: bool * 
+    exiter: Exiter * 
+    loggerProvider: ErrorLoggerProvider * 
+    tcImportsCapture: (TcImports -> unit) option *
+    dynamicAssemblyCreator: (TcGlobals * string * ILModuleDef -> unit) option
+      -> unit
 
-[<RequireQualifiedAccess>]
-type CompilationOutput = 
-    { Errors : ErrorOrWarning[]
-      Warnings : ErrorOrWarning[] }
+val compileOfAst : 
+    ctok: CompilationThreadToken *
+    legacyReferenceResolver: ReferenceResolver.Resolver * 
+    openBinariesInMemory: bool * 
+    assemblyName:string * 
+    target:CompilerTarget * 
+    targetDll:string * 
+    targetPdb:string option * 
+    dependencies:string list * 
+    noframework:bool *
+    exiter:Exiter * 
+    loggerProvider: ErrorLoggerProvider * 
+    inputs:ParsedInput list *
+    tcImportsCapture : (TcImports -> unit) option *
+    dynamicAssemblyCreator: (TcGlobals * string * ILModuleDef -> unit) option
+      -> unit
 
-type InProcCompiler = 
-    new : unit -> InProcCompiler
-    member Compile : args : string[] -> bool * CompilationOutput
 
+/// Part of LegacyHostedCompilerForTesting
+type InProcErrorLoggerProvider = 
+    new : unit -> InProcErrorLoggerProvider
+    member Provider : ErrorLoggerProvider
+    member CapturedWarnings : Diagnostic[]
+    member CapturedErrors : Diagnostic[]
 
+/// The default ErrorLogger implementation, reporting messages to the Console up to the maxerrors maximum
+type ConsoleLoggerProvider = 
+    new : unit -> ConsoleLoggerProvider
+    inherit ErrorLoggerProvider
+
+// For unit testing
 module internal MainModuleBuilder =
     
-    val fileVersion: warn: (exn -> unit) -> findStringAttr: (string -> string option) -> assemblyVersion: AbstractIL.IL.ILVersionInfo -> AbstractIL.IL.ILVersionInfo
-    val productVersion: warn: (exn -> unit) -> findStringAttr: (string -> string option) -> fileVersion: AbstractIL.IL.ILVersionInfo -> string
-    val productVersionToILVersionInfo: string -> AbstractIL.IL.ILVersionInfo
-#endif
+    val fileVersion: warn: (exn -> unit) -> findStringAttr: (string -> string option) -> assemblyVersion: ILVersionInfo -> ILVersionInfo
+    val productVersion: warn: (exn -> unit) -> findStringAttr: (string -> string option) -> fileVersion: ILVersionInfo -> string
+    val productVersionToILVersionInfo: string -> ILVersionInfo

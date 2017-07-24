@@ -1,3 +1,16 @@
+# Many tests create the following test artifacts
+tmptest.exe
+tmptest.fs
+tmptest.fsi
+tmptest1.exe
+
+# Other tests create signing artifacts
+*.sn.out
+
+access/fsc.cmd.args
+
+fsi-reference/ImplementationAssembly/ReferenceAssemblyExample.dll
+fsi-reference/ReferenceAssembly/ReferenceAssemblyExample.dll
 
 forwarders/orig
 forwarders/split

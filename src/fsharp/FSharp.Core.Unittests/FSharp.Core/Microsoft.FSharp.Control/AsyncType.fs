@@ -10,8 +10,7 @@ open FSharp.Core.Unittests.LibraryTestFx
 open NUnit.Framework
 open System.Threading
 
-#if FX_NO_TPL_PARALLEL
-#else
+#if !FX_NO_TPL_PARALLEL
 open System.Threading.Tasks
 #endif
 
@@ -129,8 +128,7 @@ type AsyncType() =
                 Assert.IsTrue(!result = "Cancel" || !result = "Ok")
         )
 
-#if FX_NO_TPL_PARALLEL
-#else
+#if !FX_NO_TPL_PARALLEL
 
     member private this.WaitASec (t:Task) =
         let result = t.Wait(TimeSpan(hours=0,minutes=0,seconds=1))
@@ -141,7 +139,7 @@ type AsyncType() =
     member this.CreateTask () =
         let s = "Hello tasks!"
         let a = async { return s }
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t : Task<string> =
 #else
         use t : Task<string> =
@@ -155,7 +153,7 @@ type AsyncType() =
     member this.StartTask () =
         let s = "Hello tasks!"
         let a = async { return s }
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t = 
 #else
         use t =
@@ -164,13 +162,28 @@ type AsyncType() =
         this.WaitASec t
         Assert.IsTrue (t.IsCompleted)
         Assert.AreEqual(s, t.Result)    
-      
+
+    [<Test>]
+    member this.RunSynchronouslyCancellationWithDelayedResult () =
+        let cts = new CancellationTokenSource()
+        let tcs = TaskCompletionSource<int>()
+        let _ = cts.Token.Register(fun () -> tcs.SetResult 42)
+        let a = async {
+            cts.CancelAfter (100)
+            let! result = tcs.Task |> Async.AwaitTask
+            return result }
+
+        try
+            Async.RunSynchronously(a, cancellationToken = cts.Token)
+                |> ignore
+        with :? OperationCanceledException as o -> ()
+
     [<Test>]
     member this.ExceptionPropagatesToTask () =
         let a = async { 
             do raise (Exception ())
          }
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t = 
 #else
         use t =
@@ -189,7 +202,7 @@ type AsyncType() =
         let a = async {
                 while true do ()
             }
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t = 
 #else
         use t =
@@ -214,7 +227,7 @@ type AsyncType() =
             }
         let cts = new CancellationTokenSource()
         let token = cts.Token
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t = 
 #else
         use t =
@@ -236,7 +249,7 @@ type AsyncType() =
     [<Test>]
     member this.TaskAsyncValue () =
         let s = "Test"
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t = 
 #else
         use t =
@@ -259,11 +272,24 @@ type AsyncType() =
             with :? System.OperationCanceledException -> return true
         }
 
-        Async.RunSynchronously(test()) |> Assert.IsTrue      
+        Async.RunSynchronously(test()) |> Assert.IsTrue   
+        
+    [<Test>]
+    member this.AwaitTaskCancellationUntyped () =
+        let test() = async {
+            let tcs = new System.Threading.Tasks.TaskCompletionSource<unit>()
+            tcs.SetCanceled()
+            try 
+                do! Async.AwaitTask (tcs.Task :> Task)
+                return false
+            with :? System.OperationCanceledException -> return true
+        }
+
+        Async.RunSynchronously(test()) |> Assert.IsTrue    
         
     [<Test>]
     member this.TaskAsyncValueException () =
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t = 
 #else
         use t =
@@ -282,7 +308,7 @@ type AsyncType() =
         use ewh = new ManualResetEvent(false)    
         let cts = new CancellationTokenSource()
         let token = cts.Token
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t : Task<unit>= 
 #else
         use t : Task<unit>=
@@ -301,7 +327,7 @@ type AsyncType() =
     [<Test>]
     member this.NonGenericTaskAsyncValue () =
         let hasBeenCalled = ref false
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t = 
 #else
         use t =
@@ -316,7 +342,7 @@ type AsyncType() =
         
     [<Test>]
     member this.NonGenericTaskAsyncValueException () =
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t = 
 #else
         use t =
@@ -335,7 +361,7 @@ type AsyncType() =
         use ewh = new ManualResetEvent(false)    
         let cts = new CancellationTokenSource()
         let token = cts.Token
-#if FSHARP_CORE_NETCORE_PORTABLE || coreclr
+#if FSCORE_PORTABLE_NEW || coreclr
         let t = 
 #else
         use t =

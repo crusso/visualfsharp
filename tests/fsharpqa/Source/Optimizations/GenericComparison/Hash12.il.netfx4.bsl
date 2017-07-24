@@ -160,6 +160,20 @@
         IL_0015:  ret
       } // end of method Key::__DebugDisplay
 
+      .method public strict virtual instance string 
+                ToString() cil managed
+      {
+        .custom instance void [mscorlib]System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() = ( 01 00 00 00 ) 
+        // Code size       22 (0x16)
+        .maxstack  8
+        IL_0000:  ldstr      "%+A"
+        IL_0005:  newobj     instance void class [FSharp.Core]Microsoft.FSharp.Core.PrintfFormat`5<class [FSharp.Core]Microsoft.FSharp.Core.FSharpFunc`2<class Hash12/HashMicroPerfAndCodeGenerationTests/Key,string>,class [FSharp.Core]Microsoft.FSharp.Core.Unit,string,string,class Hash12/HashMicroPerfAndCodeGenerationTests/Key>::.ctor(string)
+        IL_000a:  call       !!0 [FSharp.Core]Microsoft.FSharp.Core.ExtraTopLevelOperators::PrintFormatToString<class [FSharp.Core]Microsoft.FSharp.Core.FSharpFunc`2<class Hash12/HashMicroPerfAndCodeGenerationTests/Key,string>>(class [FSharp.Core]Microsoft.FSharp.Core.PrintfFormat`4<!!0,class [FSharp.Core]Microsoft.FSharp.Core.Unit,string,string>)
+        IL_000f:  ldarg.0
+        IL_0010:  callvirt   instance !1 class [FSharp.Core]Microsoft.FSharp.Core.FSharpFunc`2<class Hash12/HashMicroPerfAndCodeGenerationTests/Key,string>::Invoke(!0)
+        IL_0015:  ret
+      } // end of method Key::ToString
+
       .method public hidebysig virtual final 
               instance int32  CompareTo(class Hash12/HashMicroPerfAndCodeGenerationTests/Key obj) cil managed
       {
@@ -288,7 +302,7 @@
                  [3] int32 V_3,
                  [4] int32 V_4,
                  [5] int32 V_5)
-        .line 4,4 : 10,13 ''
+        .line 4,4 : 10,13
         IL_0000:  nop
         IL_0001:  ldarg.1
         IL_0002:  unbox.any  Hash12/HashMicroPerfAndCodeGenerationTests/Key
@@ -438,7 +452,7 @@
         .custom instance void [mscorlib]System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() = ( 01 00 00 00 ) 
         // Code size       13 (0xd)
         .maxstack  8
-        .line 4,4 : 10,13 ''
+        .line 4,4 : 10,13
         IL_0000:  nop
         IL_0001:  ldarg.0
         IL_0002:  call       class [mscorlib]System.Collections.IEqualityComparer [FSharp.Core]Microsoft.FSharp.Core.LanguagePrimitives::get_GenericEqualityComparer()
@@ -708,6 +722,20 @@
         IL_0015:  ret
       } // end of method KeyWithInnerKeys::__DebugDisplay
 
+      .method public strict virtual instance string 
+                ToString() cil managed
+      {
+        .custom instance void [mscorlib]System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() = ( 01 00 00 00 ) 
+        // Code size       22 (0x16)
+        .maxstack  8
+        IL_0000:  ldstr      "%+A"
+        IL_0005:  newobj     instance void class [FSharp.Core]Microsoft.FSharp.Core.PrintfFormat`5<class [FSharp.Core]Microsoft.FSharp.Core.FSharpFunc`2<class Hash12/HashMicroPerfAndCodeGenerationTests/KeyWithInnerKeys,string>,class [FSharp.Core]Microsoft.FSharp.Core.Unit,string,string,class Hash12/HashMicroPerfAndCodeGenerationTests/KeyWithInnerKeys>::.ctor(string)
+        IL_000a:  call       !!0 [FSharp.Core]Microsoft.FSharp.Core.ExtraTopLevelOperators::PrintFormatToString<class [FSharp.Core]Microsoft.FSharp.Core.FSharpFunc`2<class Hash12/HashMicroPerfAndCodeGenerationTests/KeyWithInnerKeys,string>>(class [FSharp.Core]Microsoft.FSharp.Core.PrintfFormat`4<!!0,class [FSharp.Core]Microsoft.FSharp.Core.Unit,string,string>)
+        IL_000f:  ldarg.0
+        IL_0010:  callvirt   instance !1 class [FSharp.Core]Microsoft.FSharp.Core.FSharpFunc`2<class Hash12/HashMicroPerfAndCodeGenerationTests/KeyWithInnerKeys,string>::Invoke(!0)
+        IL_0015:  ret
+      } // end of method KeyWithInnerKeys::ToString
+
       .method public hidebysig virtual final 
               instance int32  CompareTo(class Hash12/HashMicroPerfAndCodeGenerationTests/KeyWithInnerKeys obj) cil managed
       {
@@ -830,7 +858,7 @@
         .custom instance void [mscorlib]System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() = ( 01 00 00 00 ) 
         // Code size       14 (0xe)
         .maxstack  8
-        .line 5,5 : 10,26 ''
+        .line 5,5 : 10,26
         IL_0000:  nop
         IL_0001:  ldarg.0
         IL_0002:  ldarg.1
@@ -857,7 +885,7 @@
                  [8] class Hash12/HashMicroPerfAndCodeGenerationTests/Key V_8,
                  [9] class Hash12/HashMicroPerfAndCodeGenerationTests/Key V_9,
                  [10] int32 V_10)
-        .line 5,5 : 10,26 ''
+        .line 5,5 : 10,26
         IL_0000:  nop
         IL_0001:  ldarg.1
         IL_0002:  unbox.any  Hash12/HashMicroPerfAndCodeGenerationTests/KeyWithInnerKeys
@@ -1045,7 +1073,7 @@
         .custom instance void [mscorlib]System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() = ( 01 00 00 00 ) 
         // Code size       13 (0xd)
         .maxstack  8
-        .line 5,5 : 10,26 ''
+        .line 5,5 : 10,26
         IL_0000:  nop
         IL_0001:  ldarg.0
         IL_0002:  call       class [mscorlib]System.Collections.IEqualityComparer [FSharp.Core]Microsoft.FSharp.Core.LanguagePrimitives::get_GenericEqualityComparer()
@@ -1264,7 +1292,7 @@
       .locals init ([0] class Hash12/HashMicroPerfAndCodeGenerationTests/KeyWithInnerKeys key,
                [1] int32 i,
                [2] int32 V_2)
-      .line 8,8 : 8,64 ''
+      .line 8,8 : 8,64
       IL_0000:  nop
       IL_0001:  ldc.i4.1
       IL_0002:  ldc.i4.2
@@ -1283,12 +1311,12 @@
       IL_001b:  call       class Hash12/HashMicroPerfAndCodeGenerationTests/KeyWithInnerKeys Hash12/HashMicroPerfAndCodeGenerationTests/KeyWithInnerKeys::NewKeyWithInnerKeys(class Hash12/HashMicroPerfAndCodeGenerationTests/Key,
                                                                                                                                                                               class [mscorlib]System.Tuple`2<class Hash12/HashMicroPerfAndCodeGenerationTests/Key,class Hash12/HashMicroPerfAndCodeGenerationTests/Key>)
       IL_0020:  stloc.0
-      .line 9,9 : 8,32 ''
+      .line 9,9 : 8,32
       IL_0021:  ldc.i4.0
       IL_0022:  stloc.1
       IL_0023:  br.s       IL_0035
 
-      .line 10,10 : 12,30 ''
+      .line 10,10 : 12,30
       IL_0025:  ldloc.0
       IL_0026:  call       class [mscorlib]System.Collections.IEqualityComparer [FSharp.Core]Microsoft.FSharp.Core.LanguagePrimitives::get_GenericEqualityERComparer()
       IL_002b:  callvirt   instance int32 Hash12/HashMicroPerfAndCodeGenerationTests/KeyWithInnerKeys::GetHashCode(class [mscorlib]System.Collections.IEqualityComparer)

@@ -26,7 +26,9 @@ if /I "%PROCESSOR_ARCHITECTURE%"=="AMD64" set X86_PROGRAMFILES=%ProgramFiles(x86
 set REGEXE32BIT=reg.exe
 if not "%OSARCH%"=="x86" set REGEXE32BIT=%WINDIR%\syswow64\reg.exe
 
-                            FOR /F "tokens=2* delims=	 " %%A IN ('%REGEXE32BIT% QUERY "HKLM\Software\Microsoft\Microsoft SDKs\NETFXSDK\4.6\WinSDK-NetFx40Tools" /v InstallationFolder') DO SET WINSDKNETFXTOOLS=%%B
+                            FOR /F "tokens=2* delims=	 " %%A IN ('%REGEXE32BIT% QUERY "HKLM\Software\WOW6432Node\Microsoft\Microsoft SDKs\NETFXSDK\4.6.2\WinSDK-NetFx40Tools" /v InstallationFolder') DO SET WINSDKNETFXTOOLS=%%B
+if "%WINSDKNETFXTOOLS%"=="" FOR /F "tokens=2* delims=	 " %%A IN ('%REGEXE32BIT% QUERY "HKLM\Software\WOW6432Node\Microsoft\Microsoft SDKs\NETFXSDK\4.6.1\WinSDK-NetFx40Tools" /v InstallationFolder') DO SET WINSDKNETFXTOOLS=%%B
+if "%WINSDKNETFXTOOLS%"=="" FOR /F "tokens=2* delims=	 " %%A IN ('%REGEXE32BIT% QUERY "HKLM\Software\Microsoft\Microsoft SDKs\NETFXSDK\4.6\WinSDK-NetFx40Tools" /v InstallationFolder') DO SET WINSDKNETFXTOOLS=%%B
 if "%WINSDKNETFXTOOLS%"=="" FOR /F "tokens=2* delims=	 " %%A IN ('%REGEXE32BIT% QUERY "HKLM\Software\Microsoft\Microsoft SDKs\Windows\v8.1A\WinSDK-NetFx40Tools" /v InstallationFolder') DO SET WINSDKNETFXTOOLS=%%B
 if "%WINSDKNETFXTOOLS%"=="" FOR /F "tokens=2* delims=	 " %%A IN ('%REGEXE32BIT% QUERY "HKLM\Software\Microsoft\Microsoft SDKs\Windows\v8.0A\WinSDK-NetFx40Tools" /v InstallationFolder') DO SET WINSDKNETFXTOOLS=%%B
 if "%WINSDKNETFXTOOLS%"=="" FOR /F "tokens=2* delims=	 " %%A IN ('%REGEXE32BIT% QUERY "HKLM\Software\Microsoft\Microsoft SDKs\Windows\v7.1\WinSDK-NetFx40Tools" /v InstallationFolder') DO SET WINSDKNETFXTOOLS=%%B
@@ -45,14 +47,16 @@ mkdir "%COMPILERSDKPATH%"
 copy /y "%BINDIR%\fsc.exe" "%COMPILERSDKPATH%"
 copy /y "%BINDIR%\fsc.exe.config" "%COMPILERSDKPATH%"
 copy /y "%BINDIR%\FSharp.Build.dll" "%COMPILERSDKPATH%"
-copy /y "%BINDIR%\FSharp.Compiler.dll" "%COMPILERSDKPATH%"
+copy /y "%BINDIR%\FSharp.Compiler.Private.dll" "%COMPILERSDKPATH%"
 copy /y "%BINDIR%\FSharp.Compiler.Interactive.Settings.dll" "%COMPILERSDKPATH%"
-copy /y "%BINDIR%\Fsi.exe" "%COMPILERSDKPATH%"
-copy /y "%BINDIR%\Fsi.exe.config" "%COMPILERSDKPATH%"
-copy /y "%BINDIR%\FsiAnyCPU.exe" "%COMPILERSDKPATH%"
-copy /y "%BINDIR%\FsiAnyCPU.exe.config" "%COMPILERSDKPATH%"
-copy /y "%BINDIR%\Microsoft.FSharp.targets" "%COMPILERSDKPATH%"
-copy /y "%BINDIR%\Microsoft.Portable.FSharp.targets" "%COMPILERSDKPATH%"
+copy /y "%BINDIR%\fsi.exe" "%COMPILERSDKPATH%"
+copy /y "%BINDIR%\fsi.exe.config" "%COMPILERSDKPATH%"
+copy /y "%BINDIR%\fsiAnyCpu.exe" "%COMPILERSDKPATH%"
+copy /y "%BINDIR%\fsiAnyCpu.exe.config" "%COMPILERSDKPATH%"
+copy /y "%BINDIR%\Microsoft.FSharp.Targets" "%COMPILERSDKPATH%"
+copy /y "%BINDIR%\Microsoft.Portable.FSharp.Targets" "%COMPILERSDKPATH%"
+copy /y "%BINDIR%\Microsoft.FSharp.NetSdk.props" "%COMPILERSDKPATH%"
+copy /y "%BINDIR%\Microsoft.FSharp.NetSdk.targets" "%COMPILERSDKPATH%"
 copy /y "%TOPDIR%\vsintegration\src\SupportedRuntimes\SupportedRuntimes.xml" "%COMPILERSDKPATH%"
 
 set COMPILERMAINASSEMBLIESPATH=%X86_PROGRAMFILES%\Reference Assemblies\Microsoft\FSharp\.NETFramework\v4.0\4.%FSHARPVERSION%.0
@@ -103,14 +107,13 @@ rem Disable strong-name validation for F# binaries built from open source that a
 %SN32% -Vr FSharp.Core,b03f5f7f11d50a3a
 %SN32% -Vr FSharp.Build,b03f5f7f11d50a3a
 %SN32% -Vr FSharp.Compiler.Interactive.Settings,b03f5f7f11d50a3a
-%SN32% -Vr FSharp.Compiler.Hosted,b03f5f7f11d50a3a
+%SN32% -Vr HostedCompilerServer,b03f5f7f11d50a3a
 
 %SN32% -Vr FSharp.Compiler,b03f5f7f11d50a3a
 %SN32% -Vr FSharp.Compiler.Server.Shared,b03f5f7f11d50a3a
 %SN32% -Vr FSharp.Editor,b03f5f7f11d50a3a
 %SN32% -Vr FSharp.LanguageService,b03f5f7f11d50a3a
 %SN32% -Vr FSharp.LanguageService.Base,b03f5f7f11d50a3a
-%SN32% -Vr FSharp.LanguageService.Compiler,b03f5f7f11d50a3a
 %SN32% -Vr FSharp.ProjectSystem.Base,b03f5f7f11d50a3a
 %SN32% -Vr FSharp.ProjectSystem.FSharp,b03f5f7f11d50a3a
 %SN32% -Vr FSharp.ProjectSystem.PropertyPages,b03f5f7f11d50a3a
@@ -122,14 +125,13 @@ if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
     %SN64% -Vr FSharp.Core,b03f5f7f11d50a3a
     %SN64% -Vr FSharp.Build,b03f5f7f11d50a3a
     %SN64% -Vr FSharp.Compiler.Interactive.Settings,b03f5f7f11d50a3a
-    %SN64% -Vr FSharp.Compiler.Hosted,b03f5f7f11d50a3a
+    %SN64% -Vr HostedCompilerServer,b03f5f7f11d50a3a
 
     %SN64% -Vr FSharp.Compiler,b03f5f7f11d50a3a
     %SN64% -Vr FSharp.Compiler.Server.Shared,b03f5f7f11d50a3a
     %SN64% -Vr FSharp.Editor,b03f5f7f11d50a3a
     %SN64% -Vr FSharp.LanguageService,b03f5f7f11d50a3a
     %SN64% -Vr FSharp.LanguageService.Base,b03f5f7f11d50a3a
-    %SN64% -Vr FSharp.LanguageService.Compiler,b03f5f7f11d50a3a
     %SN64% -Vr FSharp.ProjectSystem.Base,b03f5f7f11d50a3a
     %SN64% -Vr FSharp.ProjectSystem.FSharp,b03f5f7f11d50a3a
     %SN64% -Vr FSharp.ProjectSystem.PropertyPages,b03f5f7f11d50a3a

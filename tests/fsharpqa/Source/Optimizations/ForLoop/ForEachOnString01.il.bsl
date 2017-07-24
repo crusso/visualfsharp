@@ -36,13 +36,13 @@
   // Offset: 0x00000358 Length: 0x000000FF
 }
 .module ForEachOnString01.dll
-// MVID: {5772F610-105C-852B-A745-038310F67257}
+// MVID: {578C9941-105C-852B-A745-038341998C57}
 .imagebase 0x00400000
 .file alignment 0x00000200
 .stackreserve 0x00100000
 .subsystem 0x0003       // WINDOWS_CUI
 .corflags 0x00000001    //  ILONLY
-// Image base: 0x01490000
+// Image base: 0x004A0000
 
 
 // =============== CLASS MEMBERS DECLARATION ===================
@@ -51,12 +51,14 @@
        extends [mscorlib]System.Object
 {
   .custom instance void [FSharp.Core]Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(valuetype [FSharp.Core]Microsoft.FSharp.Core.SourceConstructFlags) = ( 01 00 07 00 00 00 00 00 ) 
-  .class auto ansi serializable nested assembly beforefieldinit test8@54
+  .class auto ansi serializable sealed nested assembly beforefieldinit test8@54
          extends class [FSharp.Core]Microsoft.FSharp.Core.FSharpFunc`2<char,char>
   {
     .method assembly specialname rtspecialname 
             instance void  .ctor() cil managed
     {
+      .custom instance void [mscorlib]System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() = ( 01 00 00 00 ) 
+      .custom instance void [mscorlib]System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() = ( 01 00 00 00 ) 
       // Code size       7 (0x7)
       .maxstack  8
       IL_0000:  ldarg.0
@@ -82,12 +84,14 @@
 
   } // end of class test8@54
 
-  .class auto ansi serializable nested assembly beforefieldinit test9@63
+  .class auto ansi serializable sealed nested assembly beforefieldinit test9@63
          extends class [FSharp.Core]Microsoft.FSharp.Core.FSharpFunc`2<char,char>
   {
     .method assembly specialname rtspecialname 
             instance void  .ctor() cil managed
     {
+      .custom instance void [mscorlib]System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() = ( 01 00 00 00 ) 
+      .custom instance void [mscorlib]System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() = ( 01 00 00 00 ) 
       // Code size       7 (0x7)
       .maxstack  8
       IL_0000:  ldarg.0

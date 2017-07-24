@@ -11,6 +11,7 @@ open System.Text
 open System.Text.RegularExpressions
 
 // VS namespaces 
+open Microsoft.VisualStudio
 open Microsoft.VisualStudio.Shell
 open Microsoft.VisualStudio.Shell.Interop
 open Microsoft.VisualStudio.FSharp.ProjectSystem
@@ -22,7 +23,7 @@ open UnitTests.TestLib.Utils.Asserts
 open UnitTests.TestLib.Utils.FilesystemHelpers
 open UnitTests.TestLib.ProjectSystem
 
-[<TestFixture>]
+[<TestFixture>][<Category "ProjectSystem">]
 type Miscellaneous() = 
     inherit TheTests()
 
@@ -87,14 +88,14 @@ type Miscellaneous() =
             )
             
     [<Test>]
-    member public this.``Miscellaneous.FSharpFileNode.GetRelativePath`` () =
+    member public this.``Miscellaneous.FSharpFileNode.RelativeFilePath`` () =
         this.MakeProjectAndDo(["orig1.fs"], [], "", (fun project ->
             let absFilePath = Path.Combine(project.ProjectFolder, "orig1.fs")
             let files = new List<FSharpFileNode>()
             project.FindNodesOfType(files)
             Assert.AreEqual(1, files.Count)
             let file = files.[0]
-            let path = file.GetRelativePath()
+            let path = file.RelativeFilePath
             Assert.AreEqual("orig1.fs", path)
             ))
            
@@ -410,7 +411,7 @@ type Miscellaneous() =
                 // ensure that <PreBuildEvent> is after <Import> declaration
                 let fsprojFileText = File.ReadAllText(projFileName)
                 printfn "%s" fsprojFileText
-                let regexStr = "<Import Project=.*?Microsoft.FSharp.targets(.|\\n)*?<PreBuildEvent>"
+                let regexStr = "<Import Project=.*?Microsoft.FSharp.Targets(.|\\n)*?<PreBuildEvent>"
                 TheTests.HelpfulAssertMatches '<' regexStr fsprojFileText
                 // ensure it runs
                 let outputWindowPaneErrors : string list ref = ref [] 
@@ -479,7 +480,7 @@ type Miscellaneous() =
     <WarningLevel>3</WarningLevel>
   </PropertyGroup>", fun project configChangeNotifier projFile -> 
             let projFileText = File.ReadAllText(projFile)
-            // We need to add text _after_ the import of Microsoft.FSharp.targets.  
+            // We need to add text _after_ the import of Microsoft.FSharp.Targets.  
             let i = projFileText.IndexOf("<Import Project=")
             let i = projFileText.IndexOf(">", i)
             let newProjFileText = projFileText.Insert(i+1, @"
@@ -502,22 +503,12 @@ type Miscellaneous() =
             let expected = [| |] // Ideal behavior is [|"foo.fs";"bar.fs"|], and we could choose to improve this in the future.  For now we are just happy to now throw/crash.
             let actual = ips.SourceFilesOnDisk()
             Assert.AreEqual(expected, actual, "project site did not report expected set of source files")
-            // Now let's "fix the error"
-            configChangeNotifier(project, "Foo|AnyCPU")  // switch to Foo mode - <Error> should go away, project should start behaving as normal
-            let expected = [| "foo.fs"; "bar.fs" |] |> Array.map (fun filename -> Path.Combine(project.ProjectFolder, filename))
-            let actual = ips.SourceFilesOnDisk()
-#if FX_ATLEAST_45
-            let actual = if actual.Length > 0 then actual |> Seq.skip 1 |> Seq.toArray else actual // On Dev10, first file will be AssemblyAttributes.fs
-#endif
-            Assert.AreEqual(expected, actual, "project site did not report expected set of source files after recovery")
         )
 
     [<Test>]
     member public this.TestBuildActions () =
         DoWithTempFile "Test.fsproj" (fun file ->
             let text = TheTests.FsprojTextWithProjectReferences(["foo.fs";"Bar.resx"; "Bar.de.resx"; "Xyz\Baz.ru.resx"; "Abc.resources"],[],[],"<Import Project=\"My.targets\" />")
-            // Use toolsversion 2.0 project to have predictable default set of BuildActions
-            let text = text.Replace("ToolsVersion='4.0'", "ToolsVersion='2.0'") 
             
             File.AppendAllText(file, text)
             let dirName = Path.GetDirectoryName(file)
@@ -630,11 +621,7 @@ type Miscellaneous() =
                 project.ComputeSourcesAndFlags()
                 let items = project.GetCompileItems() |> Array.toList
                 match items with
-#if FX_ATLEAST_45
                 | [ _; fn ] -> // first file is AssemblyAttributes.fs
-#else
-                | [ fn ] ->
-#endif
                     AssertEqual fileName fn
                 | _ ->
                     sprintf "wring set of compile items %A" items |> Assert.Fail

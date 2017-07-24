@@ -223,7 +223,6 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         ASYNC
     }
 
-#if FX_ATLEAST_45
     internal static class VsBuildManagerAccessorExtensionMethods
     {
         public static bool IsInProgress(this IVsBuildManagerAccessor buildManagerAccessor)
@@ -238,68 +237,6 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             return batchBuildId != 0;
         }
     }
-#else
-    internal class BuildInProgressException : InvalidOperationException
-    {
-        public BuildInProgressException()
-            : base(SR.GetString(SR.CannotBuildWhenBuildInProgress))
-        {
-        }
-    }
-
-    internal class FSharpBuildStatus
-    {
-        private static BuildKind? currentBuild;
-
-        public static bool StartBuild(BuildKind kind)
-        {
-            if (!currentBuild.HasValue)
-            {
-                currentBuild = kind;
-                return true;
-            }
-            var currentBuildKind = currentBuild.Value;
-            switch (currentBuild)
-            {
-                case BuildKind.SYNC:
-                    // Attempt to start a build during sync build indicate reentrancy
-                    Debug.Fail("Message pumping during sync build");
-                    return false;
-                case BuildKind.ASYNC:
-                    if (kind == BuildKind.SYNC)
-                    {
-                        // if we need to do a sync build during async build, there is not much we can do:
-                        // - the async build is user-invoked build
-                        // - during that build UI thread is by design not blocked and messages are being pumped
-                        // - therefore it is legitimate for other code to call Project System APIs and query for stuff
-                        // In that case we just fail gracefully
-                        return false;
-                    }
-                    else
-                    {
-                        // Somebody attempted to start a build while build is in progress, perhaps and Addin via
-                        // the API. Inform them of an error in their ways.
-                        throw new BuildInProgressException();
-                    }
-                default:
-                    Debug.Fail("Unreachable");
-                    return false;
-
-            }
-        }
-
-        public static void EndBuild()
-        {
-            Debug.Assert(IsInProgress, "Attempt to end a build that is not started");
-            currentBuild = null;
-        }
-
-        public static bool IsInProgress
-        {
-            get { return currentBuild.HasValue; }
-        }
-    }
-#endif
 
     internal struct BuildResult
     {
@@ -554,11 +491,11 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
 
         private ConfigProvider configProvider;
 
-        private TaskProvider taskProvider;
+        private Shell.TaskProvider taskProvider;
 
         private TaskReporter taskReporter;
 
-        private ErrorListProvider projectErrorListProvider;
+        private Shell.ErrorListProvider projectErrorListProvider;
 
         private ExtensibilityEventsHelper myExtensibilityEventsHelper;
 
@@ -677,7 +614,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
 
         public abstract string TargetFSharpCoreVersion { get; set; }
 
-        internal ErrorListProvider ProjectErrorsTaskListProvider 
+        internal Shell.ErrorListProvider ProjectErrorsTaskListProvider 
         {
             get { return projectErrorListProvider; }
         }
@@ -1143,7 +1080,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         /// <summary>
         /// Gets the taskprovider.
         /// </summary>
-        public TaskProvider TaskProvider
+        public Shell.TaskProvider TaskProvider
         {
             get
             {
@@ -1455,15 +1392,15 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             {
                 taskProvider.Dispose();
             }
-            taskProvider = new TaskProvider(this.site);
-            taskReporter = new TaskReporter("Project System (ProjectNode.cs)");
+            taskProvider = new Shell.TaskProvider ( this.site);
+            taskReporter = new TaskReporter ("Project System (ProjectNode.cs)");
             taskReporter.TaskListProvider = new TaskListProvider(taskProvider);
             if (projectErrorListProvider != null)
             {
                 projectErrorListProvider.Dispose();
             }
 
-            projectErrorListProvider = new ErrorListProvider(this.site);
+            projectErrorListProvider = new Shell.ErrorListProvider (this.site);
 
             return VSConstants.S_OK;
         }
@@ -1584,13 +1521,15 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         /// Removes items from the hierarchy. 
         /// </summary>
         /// <devdoc>Project overwrites this.</devdoc>
-        public override void Remove(bool removeFromStorage)
+        public override void Remove(bool removeFromStorage, bool promptSave = true)
         {
             // the project will not be deleted from disk, just removed      
             if (removeFromStorage)
             {
                 return;
             }
+
+            Debug.Assert(promptSave, "Non-save prompting removal is not supported");
 
             // Remove the entire project from the solution
             IVsSolution solution = this.Site.GetService(typeof(SVsSolution)) as IVsSolution;
@@ -2331,7 +2270,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             {
                 this.SetCurrentConfiguration();
                 this.UpdateMSBuildState();
-                var result = this.InvokeMsBuild(ProjectFileConstants.AllProjectOutputGroups, false);
+                var result = this.InvokeMsBuild(ProjectFileConstants.AllProjectOutputGroups);
                 if (result.ProjectInstance != null) return result.ProjectInstance.GetPropertyValue(propertyName);
             };
             return this.GetProjectProperty(propertyName, true);
@@ -3010,9 +2949,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
                 this.ProcessCustomBuildActions();
 
                 this.ProcessFilesAndFolders();
-
-
-
+                
                 this.LoadNonBuildInformation();
 
                 this.InitSccInfo();
@@ -3206,11 +3143,6 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         [SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Ms")]
         internal virtual BuildResult InvokeMsBuild(string target, IEnumerable<KeyValuePair<string, string>> extraProperties = null)
         {
-            return InvokeMsBuild(target, false, extraProperties);
-        }
-
-        internal virtual BuildResult InvokeMsBuild(string target, bool isBeingCalledByComputeSourcesAndFlags, IEnumerable<KeyValuePair<string, string>> extraProperties = null)
-        {
             UIThread.MustBeCalledFromUIThread();
             ProjectInstance projectInstance = null;
 
@@ -3219,10 +3151,6 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             if (submission != null)
             {
                 MSBuildResult result = (submission.BuildResult.OverallResult == BuildResultCode.Success) ? MSBuildResult.Successful : MSBuildResult.Failed;
-                if (!isBeingCalledByComputeSourcesAndFlags)
-                {
-                    this.ComputeSourcesAndFlags();
-                }
                 return new BuildResult(result, projectInstance);
             }
             else
@@ -3357,15 +3285,6 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         {
             UIThread.MustBeCalledFromUIThread();
 
-#if FX_ATLEAST_45
-#else
-            if (!FSharpBuildStatus.StartBuild(buildKind))
-            {
-                if (uiThreadCallback != null) uiThreadCallback(MSBuildResult.Failed, projectInstance);
-                return null;
-            }
-#endif
-
             IVsBuildManagerAccessor accessor = null;
             Microsoft.Build.Framework.ILogger[] loggers;
             BuildSubmission submission;
@@ -3389,10 +3308,6 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
                 if (!ba.IsOk)
                 {
                     ba.Dispose();
-#if FX_ATLEAST_45
-#else
-                    FSharpBuildStatus.EndBuild();
-#endif
                     if (uiThreadCallback != null) uiThreadCallback(MSBuildResult.Failed, projectInstance);
                     return null;
                 }
@@ -3437,10 +3352,6 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             }
             catch (Exception)
             {
-#if FX_ATLEAST_45
-#else
-                FSharpBuildStatus.EndBuild();
-#endif
                 if (buildAccessorAccess != null)
                 {
                     buildAccessorAccess.Dispose();
@@ -3501,10 +3412,6 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             }
             finally
             {
-#if FX_ATLEAST_45
-#else
-                FSharpBuildStatus.EndBuild();
-#endif
                 buildAccessorAccess.Dispose();
             }
         }
@@ -3737,7 +3644,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         {
             ProjectElement newItem;
 
-            string itemPath = PackageUtilities.MakeRelativeIfRooted(file, this.BaseURI);
+            string itemPath = PackageUtilities.MakeRelative(this.BaseURI.AbsoluteUrl, file);
             Debug.Assert(!Path.IsPathRooted(itemPath), "Cannot add item with full path.");
 
             string defaultBuildAction = this.DefaultBuildAction(itemPath);
@@ -3923,11 +3830,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         /// </summary>
         public virtual void SetCurrentConfiguration()
         {
-#if FX_ATLEAST_45
             if ((this.GetService(typeof(SVsBuildManagerAccessor)) as IVsBuildManagerAccessor).IsInProgress())
-#else
-            if (FSharpBuildStatus.IsInProgress)
-#endif
             {
                 // we are building so this should already be the current configuration
                 return;
@@ -3953,11 +3856,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
 
             // We cannot change properties during the build so if the config
             // we want to se is the current, we do nothing otherwise we fail.
-#if FX_ATLEAST_45
             if ((this.GetService(typeof(SVsBuildManagerAccessor)) as IVsBuildManagerAccessor).IsInProgress())
-#else
-            if (FSharpBuildStatus.IsInProgress)
-#endif
             {
                 if (this.projectOpened)
                 {
@@ -4034,6 +3933,9 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             var dict = new Dictionary<Microsoft.Build.Construction.ProjectItemElement, Microsoft.Build.Evaluation.ProjectItem>();
             foreach (var item in MSBuildProject.GetStaticAndVisibleItemsInOrder(this.buildProject))
             {
+                // File with "Content" or "None" build action is not compiled, so it's safe to use wildcard
+                if (item.ItemType == "Content" || item.ItemType == "None") continue;
+
                 Microsoft.Build.Evaluation.ProjectItem previousItem;
                 var key = item.Xml;
                 if (dict.TryGetValue(key, out previousItem))
@@ -4933,7 +4835,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             return VSConstants.S_OK;
         }
 
-        public abstract void MoveFileToBottomIfNoOtherPendingMove(string relativeFilename);
+        public abstract void MoveFileToBottomIfNoOtherPendingMove(FileNode node);
 
         public int AddItem(uint itemIdLoc, VSADDITEMOPERATION op, string itemName, uint filesToOpen, string[] files, IntPtr dlgOwner, VSADDRESULT[] result)
         {
@@ -4943,37 +4845,10 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
         internal int DoAddItem(uint itemIdLoc, VSADDITEMOPERATION op, string itemName, uint filesToOpen, string[] files, IntPtr dlgOwner, VSADDRESULT[] result, AddItemContext addItemContext = AddItemContext.Unknown)
         {
             // Note that when executing UI actions from the F# project system, any pending 'moves' (for add/add above/add below) are already handled at another level (in Project.fs).
-            // Calls to MoveFileToBottomIfNoOtherPendingMove() in this method are for code paths hit directly by automation APIs.
             Guid empty = Guid.Empty;
 
             // When Adding an item, pass true to let AddItemWithSpecific know to fire the tracker events.
-            var r = AddItemWithSpecific(itemIdLoc, op, itemName, filesToOpen, files, dlgOwner, 0, ref empty, null, ref empty, result, true, context: addItemContext);
-            if (op == VSADDITEMOPERATION.VSADDITEMOP_RUNWIZARD)
-            {
-                HierarchyNode n = this.NodeFromItemId(itemIdLoc);
-                string relativeFolder = Path.GetDirectoryName(n.Url);
-                string relPath = PackageUtilities.MakeRelativeIfRooted(Path.Combine(relativeFolder, Path.GetFileName(itemName)), this.BaseURI);
-                MoveFileToBottomIfNoOtherPendingMove(relPath);
-            }
-            else if (op == VSADDITEMOPERATION.VSADDITEMOP_OPENFILE)
-            {
-                foreach (string file in files)
-                {
-                    HierarchyNode n = this.NodeFromItemId(itemIdLoc);
-                    string relativeFolder = Path.GetDirectoryName(n.Url);
-                    string relPath = PackageUtilities.MakeRelativeIfRooted(Path.Combine(relativeFolder, Path.GetFileName(file)), this.BaseURI);
-                    MoveFileToBottomIfNoOtherPendingMove(relPath);
-                }
-            }
-            else if (op == VSADDITEMOPERATION.VSADDITEMOP_LINKTOFILE)
-            {
-                // This does not seem to be reachable from automation APIs, no movement needed.
-            }
-            else if (op == VSADDITEMOPERATION.VSADDITEMOP_CLONEFILE)
-            {
-                // This seems to only be called as a sub-step of RUNWIZARD, no movement needed.
-            }
-            return r;
+            return AddItemWithSpecific(itemIdLoc, op, itemName, filesToOpen, files, dlgOwner, 0, ref empty, null, ref empty, result, true, context: addItemContext);
         }
 
         /// <summary>
@@ -5091,11 +4966,22 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
                     case VSADDITEMOPERATION.VSADDITEMOP_OPENFILE:
                         {
                             string fileName = Path.GetFileName(file);
-                            newFileName =
+                            
+                            if (context == AddItemContext.Paste && FindChild(file) != null)
+                            {
                                 // if we are doing 'Paste' and source file belongs to current project - generate fresh unique name
-                                context == AddItemContext.Paste && FindChild(file) != null
-                                    ? GenerateCopyOfFileName(baseDir, fileName)
-                                    : Path.Combine(baseDir, fileName);
+                                newFileName = GenerateCopyOfFileName(baseDir, fileName);
+                            }
+                            else if (!IsContainedWithinProjectDirectory(file))
+                            {
+                                // if the file isn't contained within the project directory,
+                                // copy it to be a child of the node we're adding to.
+                                newFileName = Path.Combine(baseDir, fileName);
+                            }
+                            else
+                            {
+                                newFileName = file;
+                            }
                         }
                         break;
                 }
@@ -5265,6 +5151,14 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
                 }
             }
 
+            for (int i = 0; i < actualFilesAddedIndex; ++i)
+            {
+                string absolutePath = actualFiles[i];
+                var fileNode = this.FindChild(absolutePath) as FileNode;
+                Debug.Assert(fileNode != null, $"Unable to find added child node {absolutePath}");
+                MoveFileToBottomIfNoOtherPendingMove(fileNode);
+            }
+
             return VSConstants.S_OK;
         }
 
@@ -5276,25 +5170,12 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             // files[index] will be the absolute location to the linked file
             for (int index = 0; index < files.Length; index++)
             {
-                string relativeUri = PackageUtilities.GetPathDistance(this.ProjectMgr.BaseURI.Uri, new Uri(files[index]));
-                if (string.IsNullOrEmpty(relativeUri))
-                {
-                    return VSConstants.E_FAIL;
-                }
-
-                string fileName = Path.GetFileName(files[index]);
-                if (string.IsNullOrEmpty(fileName))
-                {
-                    return VSConstants.E_FAIL;
-                }
-
-                LinkedFileNode linkedNode = this.AddNewFileNodeToHierarchy(node, fileName) as LinkedFileNode;
+                LinkedFileNode linkedNode = this.AddNewFileNodeToHierarchyCore(node, files[index]) as LinkedFileNode;
                 if (linkedNode == null)
                 {
                     return VSConstants.E_FAIL;
                 }
-
-                linkedNode.ItemNode.Rename(relativeUri);
+                
                 if (node == this)
                 {
                     // parent we are adding to is project root
@@ -5308,6 +5189,12 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
                 }
                 linkedNode.SetIsLinkedFile(true);
                 linkedNode.OnInvalidateItems(node);
+
+                // fire the node added event now that we've set the item metadata
+                FireAddNodeEvent(files[index]);
+
+                MoveFileToBottomIfNoOtherPendingMove(linkedNode);
+
                 result[0] = VSADDRESULT.ADDRESULT_Success;
             }
             return VSConstants.S_OK;
@@ -5327,6 +5214,9 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             bool found = false;
             bool fFolderCase = false;
             HierarchyNode parent = this.NodeFromItemId(itemIdLoc);
+            
+            if (parent is FileNode)
+                parent = parent.Parent;
 
             extToUse = ext.Trim();
             if (String.Compare(extToUse, ".config", StringComparison.OrdinalIgnoreCase) == 0 ||
@@ -5505,7 +5395,7 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             {
                 throw new ArgumentException(SR.GetString(SR.ParameterMustBeAValidItemId, CultureInfo.CurrentUICulture), "itemId");
             }
-            n.Remove(true);
+            n.Remove(removeFromStorage: true, promptSave: false);
             result = 1;
             return VSConstants.S_OK;
         }
@@ -5551,8 +5441,13 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             {
                 return VSConstants.E_FAIL;
             }
-            //Fail if the document names passed are null.
+            
+            // Fail if the document names passed are null.
             if (oldMkDoc == null || newMkDoc == null)
+                return VSConstants.E_INVALIDARG;
+
+            // Fail if the document names passed are equal.
+            if (oldMkDoc == newMkDoc)
                 return VSConstants.E_INVALIDARG;
 
             int hr = VSConstants.S_OK;
@@ -6227,16 +6122,31 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
             return VSConstants.S_OK;
         }
 
+        public bool IsUsingMicrosoftNetSdk()
+        {
+            // Nasty hack to see if we are using dotnet sdk, the SDK team will add a property in the future.
+            var c = GetProjectProperty("MSBuildAllProjects");
+            if (!string.IsNullOrWhiteSpace(c))
+            {
+                return c.Contains("Microsoft.NET.Sdk.props");
+            }
+            return false;
+        }
+
         public int UpgradeProject(uint grfUpgradeFlags)
         {
-            var hasTargetFramework = IsTargetFrameworkInstalled();
-            if (!hasTargetFramework)
+            if (!IsUsingMicrosoftNetSdk())
             {
-                hasTargetFramework = ShowRetargetingDialog();
+                var hasTargetFramework = IsTargetFrameworkInstalled();
+                if (!hasTargetFramework)
+                {
+                    hasTargetFramework = ShowRetargetingDialog();
+                }
+                // VSConstants.OLE_E_PROMPTSAVECANCELLED causes the shell to leave project unloaded
+                return hasTargetFramework ? VSConstants.S_OK : VSConstants.OLE_E_PROMPTSAVECANCELLED;
             }
-            // VSConstants.OLE_E_PROMPTSAVECANCELLED causes the shell to leave project unloaded
-            return hasTargetFramework ? VSConstants.S_OK : VSConstants.OLE_E_PROMPTSAVECANCELLED;
-        }
+            return VSConstants.S_OK;
+}
 
         /// <summary>
         /// Initialize projectNode
@@ -6478,6 +6388,15 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
                 CloseAllNodes(n);
             }
         }
+
+        /// <summary>
+        /// Debug method to assert that the project file and the solution explorer are in sync.
+        /// </summary>
+        [Conditional("DEBUG")]
+        public virtual void EnsureMSBuildAndSolutionExplorerAreInSync()
+        {
+        }
+
         /// <summary>
         /// Get the project extensions
         /// </summary>
@@ -6526,10 +6445,14 @@ namespace Microsoft.VisualStudio.FSharp.ProjectSystem
 
         private bool IsTargetFrameworkInstalled()
         {
+           var targetFrameworkMoniker = new System.Runtime.Versioning.FrameworkName(GetTargetFrameworkMoniker());
+           //Only check for .NetFramework. The expectation is that other frameworks will perform any checks themselves.
+           if (targetFrameworkMoniker.Identifier != ".NetFramework")
+              return true;
+
            var multiTargeting = this.site.GetService(typeof(SVsFrameworkMultiTargeting)) as IVsFrameworkMultiTargeting;
            Array frameworks;
            Marshal.ThrowExceptionForHR(multiTargeting.GetSupportedFrameworks(out frameworks));
-           var targetFrameworkMoniker = new System.Runtime.Versioning.FrameworkName(GetTargetFrameworkMoniker());
            foreach (string fx in frameworks)
            {
                uint compat;

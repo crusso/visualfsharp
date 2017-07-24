@@ -138,12 +138,6 @@
   <data name="ConstraintSolverTypesNotInSubsumptionRelation" xml:space="preserve">
     <value>The type '{0}' is not compatible with the type '{1}'{2}</value>
   </data>
-  <data name="ConstraintSolverError" xml:space="preserve">
-    <value>{0}</value>
-  </data>
-  <data name="ConstraintSolverRelatedInformation" xml:space="preserve">
-    <value> {0}</value>
-  </data>
   <data name="ErrorFromAddingTypeEquation1" xml:space="preserve">
     <value>This expression was expected to have type\n    '{1}'    \nbut here has type\n    '{0}'    {2}</value>
   </data>
@@ -185,12 +179,6 @@
   </data>
   <data name="InterfaceNotRevealed" xml:space="preserve">
     <value>The type implements the interface '{0}' but this is not revealed by the signature. You should list the interface in the signature, as the interface will be discoverable via dynamic type casts and/or reflection.</value>
-  </data>
-  <data name="NotAFunction1" xml:space="preserve">
-    <value>This value is not a function and cannot be applied. Did you forget to terminate a declaration?</value>
-  </data>
-  <data name="NotAFunction2" xml:space="preserve">
-    <value>This value is not a function and cannot be applied</value>
   </data>
   <data name="TyconBadArgs" xml:space="preserve">
     <value>The type '{0}' expects {1} type argument(s) but is given {2}</value>
@@ -446,6 +434,9 @@
   </data>
   <data name="Parser.TOKEN.INTERNAL" xml:space="preserve">
     <value>keyword 'internal'</value>
+  </data>
+  <data name="Parser.TOKEN.FIXED" xml:space="preserve">
+    <value>keyword 'fixed'</value>
   </data>
   <data name="Parser.TOKEN.CONSTRAINT" xml:space="preserve">
     <value>keyword 'constraint'</value>
@@ -867,6 +858,9 @@
   <data name="OverrideDoesntOverride3" xml:space="preserve">
     <value> The required signature is '{0}'.</value>
   </data>
+  <data name="OverrideDoesntOverride4" xml:space="preserve">
+    <value>The member '{0}' is specialized with 'unit' but 'unit' can't be used as return type of an abstract method parameterized on return type.</value>
+  </data>
   <data name="UnionCaseWrongArguments" xml:space="preserve">
     <value>This constructor is applied to {0} argument(s) but expects {1}</value>
   </data>
@@ -891,11 +885,20 @@
   <data name="FunctionValueUnexpected" xml:space="preserve">
     <value>This expression is a function value, i.e. is missing arguments. Its type is {0}.</value>
   </data>
-  <data name="UnitTypeExpected1" xml:space="preserve">
+  <data name="UnitTypeExpected" xml:space="preserve">
     <value>The result of this expression is implicitly ignored. Consider using 'ignore' to discard this value explicitly, e.g. 'expr |> ignore', or 'let' to bind the result to a name, e.g. 'let result = expr'.</value>
   </data>
-  <data name="UnitTypeExpected2" xml:space="preserve">
-    <value>This expression should have type 'unit', but has type '{0}'. If assigning to a property use the syntax 'obj.Prop &lt;- expr'.</value>
+  <data name="UnitTypeExpectedWithEquality" xml:space="preserve">
+    <value>The result of this equality expression is implicitly discarded. Consider using 'let' to bind the result to a name, e.g. 'let result = expression'.</value>
+  </data>
+  <data name="UnitTypeExpectedWithPossiblePropertySetter" xml:space="preserve">
+    <value>The result of this equality expression is implicitly discarded. Consider using 'let' to bind the result to a name, e.g. 'let result = expression'. If you intended to set a value to a property, then use the '&lt;-' operator e.g. '{0}.{1} &lt;- expression'.</value>
+  </data>
+  <data name="UnitTypeExpectedWithPossibleAssignment" xml:space="preserve">
+    <value>The result of this equality expression is implicitly discarded. Consider using 'let' to bind the result to a name, e.g. 'let result = expression'. If you intended to mutate a value, then mark the value 'mutable' and use the '&lt;-' operator e.g. '{0} &lt;- expression'.</value>
+  </data>
+  <data name="UnitTypeExpectedWithPossibleAssignmentToMutable" xml:space="preserve">
+    <value>The result of this equality expression is implicitly discarded. Consider using 'let' to bind the result to a name, e.g. 'let result = expression'. If you intended to mutate a value, then use the '&lt;-' operator e.g. '{0} &lt;- expression'.</value>
   </data>
   <data name="RecursiveUseCheckedAtRuntime" xml:space="preserve">
     <value>This recursive use will be checked for initialization-soundness at runtime. This warning is usually harmless, and may be suppressed by using '#nowarn "21"' or '--nowarn:21'.</value>
@@ -1042,7 +1045,7 @@
     <value>#I directives may only occur in F# script files (extensions .fsx or .fsscript). Either move this code to a script file, add a '-I' compiler option for this reference or delimit the directive with delimit it with '#if INTERACTIVE'/'#endif'.</value>
   </data>
   <data name="HashReferenceNotAllowedInNonScript" xml:space="preserve">
-    <value>#r directives may only occur in F# script files (extensions .fsx or .fsscript). Either move this code to a script file, add a '-r' compiler option for this reference or delimit the directive with '#if INTERACTIVE'/'#endif'.</value>
+    <value>#r directives may only occur in F# script files (extensions .fsx or .fsscript). Either move this code to a script file or replace this reference with the '-r' compiler option. If this directive is being executed as user input, you may delimit it with '#if INTERACTIVE'/'#endif'.</value>
   </data>
   <data name="HashDirectiveNotAllowedInNonScript" xml:space="preserve">
     <value>This directive may only be used in F# script files (extensions .fsx or .fsscript). Either remove the directive, move this code to a script file or delimit the directive with '#if INTERACTIVE'/'#endif'.</value>
