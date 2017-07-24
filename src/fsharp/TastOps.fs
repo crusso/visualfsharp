@@ -4623,11 +4623,21 @@ and mapImmediateValsAndTycons ft fv (x:ModuleOrNamespaceType) =
     let vals = x.AllValsAndMembers |> QueueList.map fv
     let tycons = x.AllEntities |> QueueList.map ft
     new ModuleOrNamespaceType(x.ModuleOrNamespaceKind, vals, tycons)
-    
+ (*  
 and copyVal compgen (v:Val) = 
     match compgen with 
     | OnlyCloneExprVals when v.IsMemberOrModuleBinding -> v
     | _ ->  v |> NewModifiedVal id
+    *)
+and copyVal compgen (v:Val) = 
+    match compgen with 
+    | OnlyCloneExprVals when v.IsMemberOrModuleBinding -> v
+    | CloneAll | OnlyCloneExprVals  ->  v |> NewModifiedVal id
+    | _ ->  
+        v |> NewModifiedVal (fun d -> 
+              if v.DisplayName.EndsWith("__Inline") then 
+                  { d with val_flags = d.val_flags.SetInlineInfo(ValInline.Always) } 
+              else d)
 
 and fixupValData g compgen tmenv (v2:Val) =
     // only fixup if we copy the value

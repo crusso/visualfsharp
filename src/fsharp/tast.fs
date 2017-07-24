@@ -184,6 +184,15 @@ type ValFlags(flags:int64) =
                                                              |               0b0000000000000110000L -> ValInline.Never
                                                              | _          -> failwith "unreachable"
 
+    member x.SetInlineInfo(inlineInfo) = 
+            let flags =                 (flags       &&&                  ~~~0b0000000000000110000L) |||
+                                        (match inlineInfo with
+                                          | ValInline.PseudoVal ->           0b0000000000000000000L
+                                          | ValInline.Always ->              0b0000000000000010000L
+                                          | ValInline.Optional ->            0b0000000000000100000L
+                                          | ValInline.Never ->               0b0000000000000110000L)
+            ValFlags(flags)
+
     member x.MutabilityInfo = 
                                   match (flags       &&&                     0b0000000000001000000L) with 
                                                              |               0b0000000000000000000L -> Immutable
