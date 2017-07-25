@@ -10050,6 +10050,12 @@ and bindLetRec (binds:Bindings) m e =
         e 
     else 
         Expr.LetRec (binds,e,m,NewFreeVarsCache()) 
+ 
+ and bindLetJoin (binds:Bindings) m e = 
+    if isNil binds then 
+        e 
+    else 
+        Expr.LetJoin (binds,e,m,NewFreeVarsCache()) 
 
 /// Check for duplicate bindings in simple recursive patterns
 and CheckRecursiveBindingIds binds =
@@ -10074,7 +10080,7 @@ and TcLinearExprs bodyChecker cenv env overallTy tpenv isCompExpr expr cont =
         TcLinearExprs bodyChecker cenv env overallTy tpenv isCompExpr e2 (fun (e2',tpenv) -> 
             cont (Expr.Sequential(e1',e2',NormalSeq,sp,m),tpenv))
 
-    | SynExpr.LetOrUse (_isJoin, isRec,isUse,binds,body,m) when not (isUse && isCompExpr) ->
+    | SynExpr.LetOrUse (isJoin, isRec,isUse,binds,body,m) when not (isUse && isCompExpr) ->
                 
         if isRec then 
             // TcLinearExprs processes at most one recursive binding, this is not tailcalling
@@ -10085,11 +10091,21 @@ and TcLinearExprs bodyChecker cenv env overallTy tpenv isCompExpr expr cont =
             let bodyExpr,tpenv = bodyChecker overallTy envinner tpenv body 
             let bodyExpr = bindLetRec binds m bodyExpr
             cont (bodyExpr,tpenv)
-        else 
-            // TcLinearExprs processes multiple 'let' bindings in a tail recursive way
-            let mkf,envinner,tpenv = TcLetBinding cenv isUse env ExprContainerInfo ExpressionBinding tpenv (binds,m,body.Range)
-            TcLinearExprs bodyChecker cenv envinner overallTy tpenv isCompExpr body (fun (x,tpenv) -> 
-                cont (fst (mkf (x,overallTy)), tpenv))
+
+        else if isJoin then
+                 // TcLinearExprs processes at most one recursive binding, this is not tailcalling
+                 CheckRecursiveBindingIds binds
+                 let binds = List.map (fun x -> RecDefnBindingInfo(ExprContainerInfo,NoNewSlots,ExpressionBinding,x)) binds
+                 if isUse then errorR(Error(FSComp.SR.tcBindingCannotBeUseAndRec(),m))
+                 let binds,envinner,tpenv = TcLetrec ErrorOnOverrides cenv env tpenv (binds,m,m)
+                 let bodyExpr,tpenv = bodyChecker overallTy envinner tpenv body 
+                 let bodyExpr = bindLetJoin binds m bodyExpr
+                 cont (bodyExpr,tpenv)
+             else 
+                 // TcLinearExprs processes multiple 'let' bindings in a tail recursive way
+                 let mkf,envinner,tpenv = TcLetBinding cenv isUse env ExprContainerInfo ExpressionBinding tpenv (binds,m,body.Range)
+                 TcLinearExprs bodyChecker cenv envinner overallTy tpenv isCompExpr body (fun (x,tpenv) -> 
+                     cont (fst (mkf (x,overallTy)), tpenv))
     | _ -> 
         cont (bodyChecker overallTy env tpenv expr)
 
@@ -11743,6 +11759,59 @@ and TcLetrec  overridesOK cenv env tpenv (binds,bindsm,scopem) =
     let envbody = AddLocalVals cenv.tcSink scopem prelimRecValues env 
     binds,envbody,tpenv
 
+and TcLetJoin  overridesOK cenv env tpenv (binds,bindsm,scopem) =
+    // Create prelimRecValues for the recursive items (includes type info from LHS of bindings) *)
+    let binds = binds |> List.map (fun (RecDefnBindingInfo(a,b,c,bind)) -> NormalizedRecBindingDefn(a,b,c,BindingNormalization.NormalizeBinding ValOrMemberBinding cenv env bind))
+    let uncheckedRecBinds,prelimRecValues,(tpenv,_) = AnalyzeAndMakeAndPublishRecursiveValues overridesOK cenv env tpenv binds
+
+    let envRec = AddLocalVals cenv.tcSink scopem prelimRecValues env 
+    
+    // Typecheck bindings 
+    let uncheckedRecBindsTable = uncheckedRecBinds  |> List.map (fun rbind  ->  rbind.RecBindingInfo.Val.Stamp, rbind) |> Map.ofList 
+
+    let (_,generalizedRecBinds,preGeneralizationRecBinds,tpenv,_) = 
+        ((env,[],[],tpenv,uncheckedRecBindsTable),uncheckedRecBinds) ||> List.fold (TcLetrecBinding (cenv,envRec,scopem,[],None)) 
+
+    // There should be no bindings that have not been generalized since checking the vary last binding always
+    // results in the generalization of all remaining ungeneralized bindings, since there are no remaining unchecked bindings
+    // to prevent the generalization 
+    assert preGeneralizationRecBinds.IsEmpty
+    
+    let generalizedRecBinds = generalizedRecBinds |> List.sortBy (fun pgrbind -> pgrbind.RecBindingInfo.Index)
+    let generalizedTyparsForRecursiveBlock = 
+         generalizedRecBinds 
+            |> List.map (fun pgrbind -> pgrbind.GeneralizedTypars)
+            |> unionGeneralizedTypars
+
+
+    let vxbinds = generalizedRecBinds |> List.map (TcLetrecAdjustMemberForSpecialVals cenv) 
+
+    // Now that we know what we've generalized we can adjust the recursive references 
+    let vxbinds = vxbinds |> List.map (FixupLetrecBind cenv env.DisplayEnv generalizedTyparsForRecursiveBlock) 
+    
+    // Now eliminate any initialization graphs 
+    let binds = 
+        let bindsWithoutLaziness = vxbinds
+        let mustHaveArity = 
+            match uncheckedRecBinds with 
+            | [] -> false
+            | (rbind :: _) -> DeclKind.MustHaveArity rbind.RecBindingInfo.DeclKind
+            
+        let results = 
+           EliminateInitializationGraphs 
+             (fun _ -> failwith "unreachable 2 - no type definitions in recursivve group")
+             (fun _ _ -> failwith "unreachable 3 - no type definitions in recursivve group")
+             id
+             (fun morpher oldBinds -> morpher oldBinds)
+             cenv.g mustHaveArity env.DisplayEnv [MutRecShape.Lets bindsWithoutLaziness] bindsm
+        match results with 
+        | [MutRecShape.Lets newBinds; MutRecShape.Lets newBinds2] -> newBinds @ newBinds2
+        | [MutRecShape.Lets newBinds] -> newBinds
+        | _ -> failwith "unreachable 4 - gave a Lets shape, expected at most one pre-lets shape back"
+    
+    // Post letrec env 
+    let envbody = AddLocalVals cenv.tcSink scopem prelimRecValues env 
+    binds,envbody,tpenv
 
 
 //-------------------------------------------------------------------------
