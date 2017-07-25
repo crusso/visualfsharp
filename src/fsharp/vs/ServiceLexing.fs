@@ -262,6 +262,7 @@ module internal TokenClassifications =
         | DOWNTO   | EXCEPTION   | FALSE   | FOR   | FUN   | FUNCTION
         | FINALLY   | LAZY   | MATCH  | MUTABLE   | NEW   | OF    | OPEN   | OR | VOID | EXTERN
         | INTERFACE | REC   | TO   | TRUE   | TRY   | TYPE   |  VAL   | INLINE   | WHEN  | WHILE   | WITH
+        | JOIN 
         | IF | THEN  | ELSE | DO | DONE | LET(_) | IN (*| NAMESPACE*) | CONST
         | HIGH_PRECEDENCE_PAREN_APP | FIXED
         | HIGH_PRECEDENCE_BRACK_APP

@@ -581,7 +581,7 @@ and
     /// F# syntax: let f pat1 .. patN = expr in expr
     /// F# syntax: let rec f pat1 .. patN = expr in expr
     /// F# syntax: use pat = expr in expr
-    | LetOrUse of isRecursive:bool * isUse:bool * bindings:SynBinding list * body:SynExpr * range:range
+    | LetOrUse of isRecursive:bool * isUse:bool  * bindings:SynBinding list * body:SynExpr * range:range
 
     /// F# syntax: try expr with pat -> expr
     | TryWith of tryExpr:SynExpr * tryRange:range * withCases:SynMatchClause list * withRange:range * range:range * trySeqPoint:SequencePointInfoForTry * withSeqPoint:SequencePointInfoForWith

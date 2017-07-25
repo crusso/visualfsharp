@@ -252,6 +252,7 @@ module Keywords =
        ALWAYS, "private"    ,PRIVATE  
        FSHARP, "public"     ,PUBLIC
        ALWAYS, "rec"        ,REC
+       ALWAYS, "join"       ,JOIN
        FSHARP, "return"      ,YIELD(false)
        ALWAYS, "sig"        ,SIG
        FSHARP, "static"     ,STATIC
