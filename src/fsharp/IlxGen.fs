@@ -1772,6 +1772,7 @@ let rec GenExpr (cenv:cenv) (cgbuf:CodeGenBuffer) eenv sp expr sequel =
       GenSequenceExpr cenv cgbuf eenv info sequel
   | None ->
 
+  
   match expr with 
   | Expr.Const(c,m,ty) -> 
       GenConstant cenv cgbuf eenv (c,m,ty) sequel
@@ -1779,7 +1780,7 @@ let rec GenExpr (cenv:cenv) (cgbuf:CodeGenBuffer) eenv sp expr sequel =
       GenMatch cenv cgbuf eenv (spBind,exprm,tree,targets,m,ty) sequel
   | Expr.Sequential(e1,e2,dir,spSeq,m) ->  
       GenSequential cenv cgbuf eenv sp (e1,e2,dir,spSeq,m) sequel
-  | Expr.LetRec (binds,body,m,_)  -> 
+  | Expr.LetJoin(binds,body,m,_) | Expr.LetRec (binds,body,m,_)  -> 
       GenLetRec cenv cgbuf eenv (binds,body,m) sequel
   | Expr.Let (bind,body,_,_)  -> 
      // This case implemented here to get a guaranteed tailcall 

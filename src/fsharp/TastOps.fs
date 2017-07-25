@@ -1030,7 +1030,7 @@ let rec rangeOfExpr x =
     | Expr.Val (_,_,m) | Expr.Op (_,_,_,m)   | Expr.Const (_,m,_) | Expr.Quote (_,_,_,m,_)
     | Expr.Obj (_,_,_,_,_,_,m) | Expr.App(_,_,_,_,m) | Expr.Sequential (_,_,_,_,m) 
     | Expr.StaticOptimization (_,_,_,m) | Expr.Lambda (_,_,_,_,_,m,_) 
-    | Expr.TyLambda (_,_,_,m,_)| Expr.TyChoose (_,_,m) | Expr.LetRec (_,_,m,_) | Expr.Let (_,_,m,_) | Expr.Match (_,_,_,_,m,_) -> m
+    | Expr.TyLambda (_,_,_,m,_)| Expr.TyChoose (_,_,m) | Expr.LetRec (_,_,m,_) | Expr.LetJoin(_,_,m,_) | Expr.Let (_,_,m,_) | Expr.Match (_,_,_,_,m,_) -> m
     | Expr.Link(eref) -> rangeOfExpr (!eref)
 
 type Expr with 
@@ -3428,6 +3428,13 @@ module DebugPrint = begin
                               (fun bind -> wordL(tagText "and") ^^ bindingL bind ^^ wordL(tagText "in")) 
         (aboveListL eqnsL @@ bodyL) 
 
+    and letJoinL binds bodyL = 
+        let eqnsL = 
+            binds
+               |> List.mapHeadTail (fun bind -> wordL(tagText "join") ^^ bindingL bind ^^ wordL(tagText "in"))
+                              (fun bind -> wordL(tagText "and") ^^ bindingL bind ^^ wordL(tagText "in")) 
+        (aboveListL eqnsL @@ bodyL)
+
     and letL bind bodyL = 
         let eqnL = wordL(tagText "let") ^^ bindingL bind ^^ wordL(tagText "in")
         (eqnL @@ bodyL) 
@@ -3467,9 +3474,11 @@ module DebugPrint = begin
             | Expr.App (f,_,tys,argtys,_) -> 
                 let flayout = atomL f
                 appL flayout tys argtys |> wrap
-            | Expr.LetRec (binds,body,_,_) -> 
+            | Expr.LetRec  (binds,body,_,_) -> 
                 letRecL binds (exprL body) |> wrap
-            | Expr.Let    (bind,body,_,_) -> 
+            | Expr.LetJoin (binds,body,_,_) -> 
+                letJoinL binds (exprL body) |> wrap
+            | Expr.Let     (bind,body,_,_) -> 
                 letL bind (exprL body) |> wrap
             | Expr.Link rX -> 
                 (wordL(tagText "RecLink") --- atomL (!rX)) |> wrap
@@ -4189,7 +4198,7 @@ and accFreeInExprNonLinear opts x acc =
         unionFreeVars (accFreeTyvars opts boundTypars vs (accFreeVarsInTy opts rty (freeInExpr opts b))) acc
     | Expr.TyChoose (vs,b,_) ->
         unionFreeVars (accFreeTyvars opts boundTypars vs (freeInExpr opts b)) acc
-    | Expr.LetRec (binds,e,_,cache) ->
+    | Expr.LetRec (binds,e,_,cache) | Expr.LetJoin(binds,e,_,cache) ->
         unionFreeVars (freeVarsCacheCompute opts cache (fun () -> List.foldBack (bindLhs opts) binds (List.foldBack (accBindRhs opts) binds (freeInExpr opts e)))) acc
     | Expr.Let _ -> 
         failwith "unreachable - linear expr"
@@ -4679,6 +4688,9 @@ and remapExpr (g: TcGlobals) (compgen:ValCopyFlag) (tmenv:Remap) x =
     | Expr.LetRec (binds,e,m,_) ->  
         let binds',tmenvinner = copyAndRemapAndBindBindings g compgen tmenv binds 
         Expr.LetRec (binds',remapExpr g compgen tmenvinner e,m,NewFreeVarsCache())
+    | Expr.LetJoin (binds,e,m,_) ->  
+        let binds',tmenvinner = copyAndRemapAndBindBindings g compgen tmenv binds 
+        Expr.LetJoin (binds',remapExpr g compgen tmenvinner e,m,NewFreeVarsCache())
     | Expr.Sequential _  
     | Expr.Let _ -> remapLinearExpr g compgen tmenv x (fun x -> x)
     | Expr.Match (spBind,exprm,pt,targets,m,ty) ->
@@ -5126,7 +5138,8 @@ let rec remarkExpr m x =
     | Expr.Lambda (uniq,ctorThisValOpt,baseValOpt,vs,b,_,rty)  -> Expr.Lambda (uniq,ctorThisValOpt,baseValOpt,vs,remarkExpr m b,m,rty)  
     | Expr.TyLambda (uniq,tps,b,_,rty) -> Expr.TyLambda (uniq,tps,remarkExpr m b,m,rty)
     | Expr.TyChoose (tps,b,_) -> Expr.TyChoose (tps,remarkExpr m b,m)
-    | Expr.LetRec (binds,e,_,fvs) ->  Expr.LetRec (remarkBinds m binds,remarkExpr m e,m,fvs)
+    | Expr.LetRec (binds,e,_,fvs) -> Expr.LetRec (remarkBinds m binds,remarkExpr m e,m,fvs)
+    | Expr.LetJoin (binds,e,_,fvs) -> Expr.LetJoin (remarkBinds m binds,remarkExpr m e,m,fvs)
     | Expr.Let (bind,e,_,fvs) -> Expr.Let (remarkBind m bind,remarkExpr m e,m,fvs)
     | Expr.Match (_,_,pt,targets,_,ty) -> primMkMatch (NoSequencePointAtInvisibleBinding,m,remarkDecisionTree m pt, Array.map (fun (TTarget(vs,e,_)) ->TTarget(vs, remarkExpr m e,SuppressSequencePointAtTarget)) targets,m,ty)
     | Expr.Val (x,valUseFlags,_) -> Expr.Val (x,valUseFlags,m)
@@ -5262,8 +5275,8 @@ let rec tyOfExpr g e =
     | Expr.TyChoose(_,e,_)
     | Expr.Link { contents=e}
     | Expr.StaticOptimization (_,_,e,_) 
-    | Expr.LetRec(_,e,_,_) -> tyOfExpr g e
-    | Expr.Op (op,tinst,_,_) -> 
+    | Expr.LetRec(_,e,_,_) | Expr.LetJoin(_,e,_,_) -> tyOfExpr g e
+    | Expr.Op (op,tinst,_,_) ->
         match op with 
         | TOp.Coerce -> (match tinst with [to_ty;_fromTy] -> to_ty | _ -> failwith "bad TOp.Coerce node")
         | (TOp.ILCall (_,_,_,_,_,_,_,_,_,_,rtys) | TOp.ILAsm(_,rtys)) -> (match rtys with [h] -> h | _ -> g.unit_ty)
@@ -5809,6 +5822,10 @@ type ExprFolders<'State> (folders : _ ExprFolder) =
                 let z = exprsF z argtys
                 z
             | Expr.LetRec (binds,body,_,_) -> 
+                let z = valBindsF false z binds
+                let z = exprF z body
+                z
+            | Expr.LetJoin (binds,body,_,_) -> 
                 let z = valBindsF false z binds
                 let z = exprF z body
                 z
@@ -7536,6 +7553,10 @@ and rewriteExprStructure env expr =
       let binds = rewriteBinds env binds
       let e' = RewriteExpr env e
       Expr.LetRec(binds,e',m,NewFreeVarsCache())
+  | Expr.LetJoin (binds,e,m,_) ->
+      let binds = rewriteBinds env binds
+      let e' = RewriteExpr env e
+      Expr.LetJoin(binds,e',m,NewFreeVarsCache())
 
   | Expr.Let _ -> failwith "unreachable - linear let"
 

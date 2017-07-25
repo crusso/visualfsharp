@@ -4043,6 +4043,9 @@ and
     /// Bind a recursive set of values. 
     | LetRec of Bindings * Expr * range * FreeVarsCache
 
+    // Bind a join point
+    | LetJoin of Bindings * Expr * range * FreeVarsCache
+    
     /// Bind a value. 
     | Let of Binding * Expr * range * FreeVarsCache
 

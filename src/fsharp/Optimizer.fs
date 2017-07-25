@@ -87,7 +87,7 @@ type ExprValueInfo =
   | UnionCaseValue of UnionCaseRef * ExprValueInfo[]
 
   | ConstValue of Const * TType
-
+    
   /// CurriedLambdaValue(id,arity,sz,expr,typ)
   ///    
   ///    arities: The number of bunches of untupled args and type args, and 
@@ -1710,6 +1710,7 @@ let rec OptimizeExpr cenv (env:IncrementalOptimizationEnv) expr =
     | Expr.TyChoose _  -> OptimizeExpr cenv env (TypeRelations.ChooseTyparSolutionsForFreeChoiceTypars cenv.g cenv.amap expr)
     | Expr.Match(spMatch,exprm,dtree,targets,m,ty) -> OptimizeMatch cenv env (spMatch,exprm,dtree,targets,m,ty)
     | Expr.LetRec (binds,e,m,_) ->  OptimizeLetRec cenv env (binds,e,m)
+    | Expr.LetJoin (binds,e,m,_) -> OptimizeLetJoin cenv env (binds,e,m)
     | Expr.StaticOptimization (constraints,e2,e3,m) ->
         let e2',e2info = OptimizeExpr cenv env e2
         let e3',e3info = OptimizeExpr cenv env e3
@@ -2014,7 +2015,7 @@ and OptimizeFastIntegerForLoop cenv env (spStart,v,e1,dir,e2,e3,m) =
 // Optimize/analyze a set of recursive bindings
 //------------------------------------------------------------------------- 
 
-and OptimizeLetRec cenv env (binds,bodyExpr,m) =
+and OptimizeLetThing thingCtor cenv env (binds : Bindings,bodyExpr,m) =
     let vs = binds |> List.map (fun v -> v.Var) 
     let env = BindInternalValsToUnknown cenv vs env 
     let binds',env = OptimizeBindings cenv true env binds 
@@ -2028,9 +2029,11 @@ and OptimizeLetRec cenv env (binds,bodyExpr,m) =
     // Trim out any optimization info that involves escaping values 
     let evalue' = AbstractExprInfoByVars (vs,[]) einfo.Info 
     // REVIEW: size of constructing new closures - should probably add #freevars + #recfixups here 
-    let bodyExpr' = Expr.LetRec(binds'',bodyExpr',m,NewFreeVarsCache()) 
+    let bodyExpr' = thingCtor(binds'',bodyExpr',m,NewFreeVarsCache()) 
     let info = CombineValueInfos (einfo :: bindinfos) evalue' 
     bodyExpr', info
+and OptimizeLetRec = OptimizeLetThing (Expr.LetRec)
+and OptimizeLetJoin = OptimizeLetThing (Expr.LetJoin)
 
 //-------------------------------------------------------------------------
 // Optimize/analyze a linear sequence of sequentioanl execution or 'let' bindings.

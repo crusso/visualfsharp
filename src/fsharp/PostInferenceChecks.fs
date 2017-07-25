@@ -704,6 +704,11 @@ and CheckExpr (cenv:cenv) (env:env) expr (context:ByrefContext) =
         CheckBindings cenv env binds
         CheckExprNoByrefs cenv env e
 
+    | Expr.LetJoin (binds,e,_,_) ->  
+        BindVals cenv env (valsOfBinds binds)
+        CheckBindings cenv env binds
+        CheckExprNoByrefs cenv env e
+
     | Expr.StaticOptimization (constraints,e2,e3,m) -> 
         CheckExprNoByrefs cenv env e2
         CheckExprNoByrefs cenv env e3

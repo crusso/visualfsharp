@@ -2316,6 +2316,7 @@ and p_expr expr st =
     | Expr.TyLambda (_,b,c,d,e)           -> p_byte 5 st; p_tup4 p_typar_specs p_expr p_dummy_range p_typ (b,c,d,e) st
     | Expr.App (a1,a2,b,c,d)             -> p_byte 6 st; p_tup5 p_expr p_typ p_typs p_Exprs p_dummy_range (a1,a2,b,c,d) st
     | Expr.LetRec (a,b,c,_)              -> p_byte 7 st; p_tup3 p_binds p_expr p_dummy_range (a,b,c) st
+    | Expr.LetJoin (a,b,c,_)             -> p_byte 14 st; p_tup3 p_binds p_expr p_dummy_range (a,b,c) st
     | Expr.Let (a,b,c,_)                 -> p_byte 8 st; p_tup3 p_bind p_expr p_dummy_range (a,b,c) st
     | Expr.Match (_,a,b,c,d,e)           -> p_byte 9 st; p_tup5 p_dummy_range p_dtree p_targets p_dummy_range p_typ (a,b,c,d,e) st
     | Expr.Obj(_,b,c,d,e,f,g)            -> p_byte 10 st; p_tup6 p_typ (p_option p_Val) p_expr p_methods p_intfs p_dummy_range (b,c,d,e,f,g) st
@@ -2396,6 +2397,10 @@ and u_expr st =
             let c = u_dummy_range st
             let d = u_typ st
             Expr.Quote (b,ref None,false,c,d) // isFromQueryExpression=false
+    | 14 -> let a = u_binds st
+            let b = u_expr st
+            let c = u_dummy_range st
+            Expr.LetJoin (a,b,c,NewFreeVarsCache()) 
     | _ -> ufailwith st "u_expr" 
 
 and p_static_optimization_constraint x st = 
