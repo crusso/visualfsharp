@@ -3448,7 +3448,7 @@ let (|SimpleSemicolonSequence|_|) acceptDeprecated c =
         | SynExpr.Match (_,_,clauses,_,_) -> clauses |> List.forall (fun (Clause(_,_,e,_,_)) -> YieldFree e)
         | SynExpr.For (_,_,_,_,_,body,_) 
         | SynExpr.TryFinally (body,_,_,_,_)
-        | SynExpr.LetOrUse (_,_,_,body,_) 
+        | SynExpr.LetOrUse (_,_,_,_,body,_) 
         | SynExpr.While (_,_,body,_) 
         | SynExpr.ForEach (_,_,_,_,_,body,_) -> YieldFree body
         | SynExpr.YieldOrReturnFrom _ 
@@ -7860,7 +7860,7 @@ and TcComputationExpression cenv env overallTy mWhole interpExpr builderTy tpenv
                 Some (trans true q varSpace thenComp (fun holeFill -> translatedCtxt (SynExpr.IfThenElse(guardExpr, holeFill, Some elseComp, spIfToThen,isRecovery,mIfToThen,mIfToEndOfElseBranch))))
 
         // 'let binds in expr'
-        | SynExpr.LetOrUse (isRec,false,binds,innerComp,m) ->
+        | SynExpr.LetOrUse (isJoin,isRec,false,binds,innerComp,m) ->
 
             // For 'query' check immediately
             if isQuery then
@@ -7888,10 +7888,10 @@ and TcComputationExpression cenv env overallTy mWhole interpExpr builderTy tpenv
                         error(Error(FSComp.SR.tcCustomOperationMayNotBeUsedInConjunctionWithNonSimpleLetBindings(),mQueryOp)))
 
 
-            Some (trans true q varSpace innerComp (fun holeFill -> translatedCtxt (SynExpr.LetOrUse (isRec,false,binds,holeFill,m))))
+            Some (trans true q varSpace innerComp (fun holeFill -> translatedCtxt (SynExpr.LetOrUse (isJoin,isRec,false,binds,holeFill,m))))
 
         // 'use x = expr in expr'
-        | SynExpr.LetOrUse (_,true,[Binding (_,NormalBinding,_,_,_,_,_,pat,_,rhsExpr,_,spBind)],innerComp,_) ->
+        | SynExpr.LetOrUse (_,_,true,[Binding (_,NormalBinding,_,_,_,_,_,pat,_,rhsExpr,_,spBind)],innerComp,_) ->
             let bindRange = match spBind with SequencePointAtBinding m -> m | _ -> rhsExpr.Range
             if isQuery then error(Error(FSComp.SR.tcUseMayNotBeUsedInQueries(),bindRange))
             let innerCompRange = innerComp.Range
@@ -8142,7 +8142,7 @@ and TcSequenceExpression cenv env tpenv comp overallTy m =
                 Some(mkCond spIfToThen SequencePointAtTarget mIfToEndOfElseBranch genOuterTy guardExpr' thenExpr elseExpr, tpenv)
 
             // 'let x = expr in expr'
-            | SynExpr.LetOrUse (_,false (* not a 'use' binding *),_,_,_) ->
+            | SynExpr.LetOrUse (_isJoin,_,false (* not a 'use' binding *),_,_,_) ->
                 TcLinearExprs 
                     (fun ty envinner tpenv e -> tcSequenceExprBody envinner ty tpenv e) 
                     cenv env overallTy 
@@ -8152,7 +8152,7 @@ and TcSequenceExpression cenv env tpenv comp overallTy m =
                     (fun x -> x)  |> Some
 
             // 'use x = expr in expr'
-            | SynExpr.LetOrUse (_isRec,true,[Binding (_vis,NormalBinding,_,_,_,_,_,pat,_,rhsExpr,_,_spBind)],innerComp,wholeExprMark) ->
+            | SynExpr.LetOrUse (_isJoin,_isRec,true,[Binding (_vis,NormalBinding,_,_,_,_,_,pat,_,rhsExpr,_,_spBind)],innerComp,wholeExprMark) ->
 
                 let bindPatTy = NewInferenceType ()
                 let inputExprTy = NewInferenceType ()
@@ -10074,7 +10074,7 @@ and TcLinearExprs bodyChecker cenv env overallTy tpenv isCompExpr expr cont =
         TcLinearExprs bodyChecker cenv env overallTy tpenv isCompExpr e2 (fun (e2',tpenv) -> 
             cont (Expr.Sequential(e1',e2',NormalSeq,sp,m),tpenv))
 
-    | SynExpr.LetOrUse (isRec,isUse,binds,body,m) when not (isUse && isCompExpr) ->
+    | SynExpr.LetOrUse (_isJoin, isRec,isUse,binds,body,m) when not (isUse && isCompExpr) ->
                 
         if isRec then 
             // TcLinearExprs processes at most one recursive binding, this is not tailcalling

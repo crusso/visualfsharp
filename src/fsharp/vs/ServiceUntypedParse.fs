@@ -255,7 +255,7 @@ type FSharpParseFileResults(errors : FSharpErrorInfo[], input : Ast.ParsedInput 
                       for (Clause(_,whenExpr,e,_,_)) in cl do 
                           yield! walkExprOpt false whenExpr
                           yield! walkExpr true e 
-                  | SynExpr.LetOrUse (_,_,bs,e,_) -> 
+                  | SynExpr.LetOrUse (_, _,_,bs,e,_) -> 
                       yield! walkBinds bs  
                       yield! walkExpr true e
 
@@ -796,7 +796,7 @@ module UntypedParseImpl =
             | SynExpr.App(_, _, e1, e2, _) -> List.tryPick (walkExprWithKind parentKind) [e1; e2]
             | SynExpr.TypeApp(e, _, tys, _, _, _, _) -> 
                 walkExprWithKind (Some EntityKind.Type) e |> Option.orElse (List.tryPick walkType tys)
-            | SynExpr.LetOrUse(_, _, bindings, e, _) -> List.tryPick walkBinding bindings |> Option.orElse (walkExprWithKind parentKind e)
+            | SynExpr.LetOrUse(_, _, _, bindings, e, _) -> List.tryPick walkBinding bindings |> Option.orElse (walkExprWithKind parentKind e)
             | SynExpr.TryWith(e, _, clauses, _, _, _, _) -> walkExprWithKind parentKind e |> Option.orElse (List.tryPick walkClause clauses)
             | SynExpr.TryFinally(e1, e2, _, _, _) -> List.tryPick (walkExprWithKind parentKind) [e1; e2]
             | SynExpr.Lazy(e, _) -> walkExprWithKind parentKind e

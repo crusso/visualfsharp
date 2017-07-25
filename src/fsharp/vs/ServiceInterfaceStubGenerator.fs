@@ -818,7 +818,7 @@ module internal InterfaceStubGenerator =
                 | SynExpr.TypeApp(synExpr, _, _synTypeList, _commas, _, _, _range) -> 
                     walkExpr synExpr
 
-                | SynExpr.LetOrUse(_, _, synBindingList, synExpr, _range) -> 
+                | SynExpr.LetOrUse(_, _, _, synBindingList, synExpr, _range) -> 
                     Option.orElse (List.tryPick walkBinding synBindingList) (walkExpr synExpr)
 
                 | SynExpr.TryWith(synExpr, _range, _synMatchClauseList, _range2, _range3, _sequencePointInfoForTry, _sequencePointInfoForWith) -> 

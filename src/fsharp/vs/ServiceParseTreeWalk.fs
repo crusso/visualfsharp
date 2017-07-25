@@ -361,7 +361,7 @@ module internal AstTraversal =
                          dive synExpr2 synExpr2.Range traverseSynExpr]
                         |> pick expr
                 | SynExpr.TypeApp(synExpr, _, _synTypeList, _commas, _, _, _range) -> traverseSynExpr synExpr
-                | SynExpr.LetOrUse(_, _, synBindingList, synExpr, range) -> 
+                | SynExpr.LetOrUse(_, _, _, synBindingList, synExpr, range) -> 
                     match visitor.VisitLetOrUse(synBindingList, range) with
                     | Some x -> Some x
                     | None ->

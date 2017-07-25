@@ -252,7 +252,7 @@ module Structure =
             | SynExpr.ForEach (_,_,_,_,_,e,r) ->
                 rcheck Scope.For Collapse.Below r r
                 parseExpr e
-            | SynExpr.LetOrUse (_,_,bindings, body, _) ->
+            | SynExpr.LetOrUse (_,_,_,bindings, body, _) ->
                 parseBindings bindings
                 parseExpr body
             | SynExpr.Match (seqPointAtBinding,_expr,clauses,_,r) ->

@@ -104,10 +104,10 @@ let checkEndOfFileError t =
       | [] -> ()
       | (_,m) :: _  -> reportParseErrorAt m (FSComp.SR.parsNoHashEndIfFound())
 
-//                BindingSetPreAttrs(letRange, isRec, isUse, builderFunction, wholeRange)
-type BindingSet = BindingSetPreAttrs of range * bool * bool * (SynAttributes -> SynAccess option -> SynAttributes * SynBinding list) * range
+//                BindingSetPreAttrs(letRange, isJoin, isRec, isUse, builderFunction, wholeRange)
+type BindingSet = BindingSetPreAttrs of range * bool * bool * bool * (SynAttributes -> SynAccess option -> SynAttributes * SynBinding list) * range
 
-let mkClassMemberLocalBindings(isStatic,initialRangeOpt,attrs,vis,BindingSetPreAttrs(_,isRec,isUse,declsPreAttrs,bindingSetRange)) = 
+let mkClassMemberLocalBindings(isStatic,initialRangeOpt,attrs,vis,BindingSetPreAttrs(_,isJoin, isRec,isUse,declsPreAttrs,bindingSetRange)) = 
    let ignoredFreeAttrs,decls = declsPreAttrs attrs vis
    let wholeRange = 
        match initialRangeOpt with 
@@ -117,12 +117,12 @@ let mkClassMemberLocalBindings(isStatic,initialRangeOpt,attrs,vis,BindingSetPreA
    if isUse then errorR(Error(FSComp.SR.parsUseBindingsIllegalInImplicitClassConstructors(),wholeRange))
    SynMemberDefn.LetBindings (decls,isStatic,isRec,wholeRange)
 
-let mkLocalBindings (mWhole,BindingSetPreAttrs(_,isRec,isUse,declsPreAttrs,_),body) = 
+let mkLocalBindings (mWhole,BindingSetPreAttrs(_,isJoin, isRec,isUse,declsPreAttrs,_),body) = 
    let ignoredFreeAttrs,decls = declsPreAttrs [] None 
    if not (isNil ignoredFreeAttrs) then warning(Error(FSComp.SR.parsAttributesIgnored(),mWhole))
-   SynExpr.LetOrUse (isRec,isUse,decls,body,mWhole) 
+   SynExpr.LetOrUse (isJoin,isRec,isUse,decls,body,mWhole) 
 
-let mkDefnBindings (mWhole,BindingSetPreAttrs(_,isRec,isUse,declsPreAttrs,_bindingSetRange),attrs,vis,attrsm) = 
+let mkDefnBindings (mWhole,BindingSetPreAttrs(_,isJoin, isRec,isUse,declsPreAttrs,_bindingSetRange),attrs,vis,attrsm) = 
     if isUse then warning(Error(FSComp.SR.parsUseBindingsIllegalInModules(),mWhole))
     let freeAttrs,decls = declsPreAttrs attrs vis 
     let letDecls = [ SynModuleDecl.Let (isRec,decls,mWhole) ] 
@@ -1201,7 +1201,7 @@ moduleDefn:
   | opt_attributes opt_declVisibility defnBindings                   %prec decl_let 
       { if Option.isSome $2 then errorR(Error(FSComp.SR.parsVisibilityDeclarationsShouldComePriorToIdentifier(),rhs parseState 2))
         parseState.ResetSynArgNameGenerator()
-        let (BindingSetPreAttrs(_,_,_,_,mWhole)) = $3 
+        let (BindingSetPreAttrs(_,_,_,_,_,mWhole)) = $3 
         mkDefnBindings (mWhole,$3,$1,$2,mWhole)  }
 
   /* 'let' or 'do' definitions in #light */
@@ -2378,18 +2378,18 @@ defnBindings:
             | Some lastRange -> unionRanges mLetKwd lastRange
 
         // The first binding swallows any attributes prior to the 'let'
-        BindingSetPreAttrs(mLetKwd,isRec,isUse,
+        BindingSetPreAttrs(mLetKwd,isJoin, isRec,isUse,
             (fun attrs vis -> 
                 // apply the builder
                 let binds = localBindingsBuilder attrs vis mLetKwd
-                if not isRec && not (isNilOrSingleton binds) then 
+                if not isRec && not isJoin && not (isNilOrSingleton binds) then 
                       reportParseErrorAt mLetKwd (FSComp.SR.parsLetAndForNonRecBindings())
                 [],binds), 
             bindingSetRange) }
 
   | cPrototype
       { let bindRange = lhs parseState
-        BindingSetPreAttrs(bindRange, false,false,$1,bindRange)  }
+        BindingSetPreAttrs(bindRange,false,false,false,$1,bindRange)  }
 
 
 /* A 'do ...' statement in the non-#light syntax */
@@ -2399,7 +2399,7 @@ doBinding:
         let mWhole = unionRanges mDoKwd $2.Range
         // any attributes prior to the 'let' are left free, e.g. become top-level attributes 
         // associated with the module, 'main' function or assembly depending on their target 
-        BindingSetPreAttrs(mDoKwd,false,false,(fun attrs vis -> attrs,[mkSynDoBinding (vis,true,$2,mWhole)]), mWhole) }
+        BindingSetPreAttrs(mDoKwd,false,false,false,(fun attrs vis -> attrs,[mkSynDoBinding (vis,true,$2,mWhole)]), mWhole) }
 
 
 /* A 'let ....' binding in the #light syntax */
@@ -2419,10 +2419,10 @@ hardwhiteLetBindings:
             | Some lastRange -> unionRanges mLetKwd lastRange
 
         // the first binding swallow any attributes prior to the 'let' 
-        BindingSetPreAttrs(mLetKwd,isRec,isUse,
+        BindingSetPreAttrs(mLetKwd,isJoin, isRec,isUse,
           (fun attrs vis ->
             let binds = localBindingsBuilder attrs vis mLetKwd
-            if not isRec && not (isNilOrSingleton binds) then
+            if not isRec && not isJoin && not (isNilOrSingleton binds) then
                 reportParseErrorAt mLetKwd (FSComp.SR.parsLetAndForNonRecBindings())
             [],binds),
           bindingSetRange), (unionRanges mLetKwd bindingSetRange) }
@@ -2436,7 +2436,7 @@ hardwhiteDoBinding:
         let seqPt = NoSequencePointAtDoBinding 
         // any attributes prior to the 'let' are left free, e.g. become top-level attributes 
         // associated with the module, 'main' function or assembly depending on their target 
-        BindingSetPreAttrs(mLetKwd,false,false,(fun attrs vis -> attrs,[mkSynDoBinding (vis,true,$2,bindingSetRange)]),bindingSetRange), $2 }
+        BindingSetPreAttrs(mLetKwd,false, false,false,(fun attrs vis -> attrs,[mkSynDoBinding (vis,true,$2,bindingSetRange)]),bindingSetRange), $2 }
 
 
 /* The bindings in a class type definition */
@@ -2989,7 +2989,7 @@ seqExpr:
       { SynExpr.Sequential(SequencePointsAtSeq,false,$1,$4,unionRanges $1.Range $4.Range) }
   | hardwhiteLetBindings %prec prec_args_error
      { let hwlb,m = $1
-       let mLetKwd,isUse = match hwlb with (BindingSetPreAttrs(m,_,isUse,_,_))  -> m,isUse
+       let mLetKwd,isUse = match hwlb with (BindingSetPreAttrs(m,_,_,isUse,_,_))  -> m,isUse
        let usedKeyword = if isUse then "use" else "let"
        reportParseErrorAt mLetKwd (FSComp.SR.parsExpectedExpressionAfterLet(usedKeyword,usedKeyword))
        let fauxRange = m.EndRange // zero width range at end of m
@@ -3020,7 +3020,7 @@ declExpr:
 
   | hardwhiteLetBindings error        %prec expr_let
      { let hwlb,m = $1
-       reportParseErrorAt (match hwlb with (BindingSetPreAttrs(m,_,_,_,_))  -> m) (FSComp.SR.parsErrorInReturnForLetIncorrectIndentation())
+       reportParseErrorAt (match hwlb with (BindingSetPreAttrs(m,_,_,_,_,_))  -> m) (FSComp.SR.parsErrorInReturnForLetIncorrectIndentation())
        mkLocalBindings (m,hwlb,arbExpr("declExpr2",(rhs parseState 2))) }
 
   | hardwhiteLetBindings OBLOCKSEP typedSeqExprBlock  %prec expr_let 
@@ -3029,7 +3029,7 @@ declExpr:
 
   | hardwhiteLetBindings OBLOCKSEP error        %prec expr_let
      { let hwlb,m = $1
-       //reportParseErrorAt (match hwlb with (BindingSetPreAttrs(m,_,_,_,_))  -> m) (FSComp.SR.parsErrorInReturnForLetIncorrectIndentation())
+       //reportParseErrorAt (match hwlb with (BindingSetPreAttrs(m,_,_,_,_,_))  -> m) (FSComp.SR.parsErrorInReturnForLetIncorrectIndentation())
        mkLocalBindings (unionRanges m (rhs parseState 3),hwlb,arbExpr("declExpr3",(rhs parseState 3))) }
 
   | hardwhiteDoBinding  %prec expr_let

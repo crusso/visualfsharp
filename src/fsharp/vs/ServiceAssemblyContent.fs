@@ -687,7 +687,7 @@ module ParsedInput =
                 List.iter walkClause synMatchClauseList
             | SynExpr.TypeApp (e, _, tys, _, _, _, _) ->
                 List.iter walkType tys; walkExpr e
-            | SynExpr.LetOrUse (_, _, bindings, e, _) ->
+            | SynExpr.LetOrUse (_, _, _, bindings, e, _) ->
                 List.iter walkBinding bindings; walkExpr e
             | SynExpr.TryWith (e, _, clauses, _, _, _, _) ->
                 List.iter walkClause clauses;  walkExpr e
