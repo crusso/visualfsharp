@@ -554,7 +554,7 @@ module Pass2_DetermineReqdItems =
              | _ ->
                  (* NO: app, but function is not val - no log *)
                  None
-         | Expr.LetRec (binds,body,m,_) -> 
+         | Expr.LetRec (binds,body,m,_) | Expr.LetJoin(binds,body,m,_) -> 
              let z = accBinds m z binds
              let z = exprF z body
              Some z
@@ -1212,6 +1212,24 @@ module Pass4_RewriteAssembly =
              TransLinearExpr penv z e (contf << (fun (e,z) -> 
                  let e = mkLetsFromBindings m rebinds e
                  WrapPreDecs m pds (Expr.LetRec (binds,e,m,NewFreeVarsCache())),z))
+
+        | Expr.LetJoin (binds,e,m,_) ->
+             let z = EnterInner z
+             // For letrec, preDecs from RHS must mutually recurse with those from the bindings 
+             let z,pdsPrior    = PopPreDecs z
+             let binds,z       = List.mapFold (TransBindingRhs penv) z binds
+             let z,pdsRhs      = PopPreDecs z
+             let binds,rebinds = TransBindings   IsRec penv binds
+             let z,binds       = LiftTopBinds IsRec penv z   binds (* factor Top* repr binds *)
+             let z,rebinds     = LiftTopBinds IsRec penv z rebinds
+             let z,pdsBind     = PopPreDecs z
+             let z             = SetPreDecs z (TreeNode [pdsPrior;RecursivePreDecs pdsBind pdsRhs])
+             let z = ExitInner z
+             let pds,z = ExtractPreDecs z
+             // tailcall
+             TransLinearExpr penv z e (contf << (fun (e,z) -> 
+                 let e = mkLetsFromBindings m rebinds e
+                 WrapPreDecs m pds (Expr.LetJoin (binds,e,m,NewFreeVarsCache())),z))
 
          // let - can consider the mu-let bindings as mu-letrec bindings - so like as above 
          | Expr.Let    (bind,e,m,_) ->
