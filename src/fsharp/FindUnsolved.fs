@@ -80,7 +80,7 @@ let rec accExpr   (cenv:cenv) (env:env) expr =
         accTy cenv env ty
         accDTree cenv env dtree
         accTargets cenv env m ty targets
-    | Expr.LetRec (binds,e,_m,_) ->  
+    | Expr.LetRec (binds,e,_m,_) | Expr.LetJoin (binds,e,_m,_) ->  
         accBinds cenv env binds
         accExpr cenv env e
     | Expr.StaticOptimization (constraints,e2,e3,_m) -> 

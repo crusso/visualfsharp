@@ -1106,7 +1106,7 @@ module Pass4_RewriteAssembly =
     let rec TransExpr (penv: RewriteContext) (z:RewriteState) expr : Expr * RewriteState =
         match expr with
         // Use TransLinearExpr with a rebuild-continuation for some forms to avoid stack overflows on large terms *)
-        | Expr.LetRec _ | Expr.Let    _ | Expr.Sequential _ -> 
+        | Expr.LetRec _ | Expr.Let    _ | Expr.Sequential _ | Expr.LetJoin _ -> 
              TransLinearExpr penv z expr (fun res -> res)
 
         // app - call sites may require z.

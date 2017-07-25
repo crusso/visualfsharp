@@ -3716,6 +3716,9 @@ let EliminateInitializationGraphs
             | Expr.LetRec (binds,e,_,_)  ->
                 binds |> List.iter (CheckBinding (strict st))  
                 CheckExpr (strict st) e
+            | Expr.LetJoin (binds,e,_,_)  ->
+                binds |> List.iter (CheckBinding (strict st))  
+                CheckExpr (strict st) e
             | Expr.Let (bind,e,_,_) ->  
                 CheckBinding (strict st) bind 
                 CheckExpr (strict st) e
