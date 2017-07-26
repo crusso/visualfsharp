@@ -649,6 +649,7 @@ and BranchCallItem =
         int *
         // num obj args 
         int 
+     | BranchCallJoin of ValStorage option list
       
 and Mark = 
     | Mark of ILCodeLabel (* places we can branch to  *)
@@ -1780,7 +1781,9 @@ let rec GenExpr (cenv:cenv) (cgbuf:CodeGenBuffer) eenv sp expr sequel =
       GenMatch cenv cgbuf eenv (spBind,exprm,tree,targets,m,ty) sequel
   | Expr.Sequential(e1,e2,dir,spSeq,m) ->  
       GenSequential cenv cgbuf eenv sp (e1,e2,dir,spSeq,m) sequel
-  | Expr.LetJoin(binds,body,m,_) | Expr.LetRec (binds,body,m,_)  -> 
+  | Expr.LetJoin(binds,body,m,_) ->
+      GenLetJoin cenv cgbuf eenv (binds,body,m) sequel
+  | Expr.LetRec (binds,body,m,_)  -> 
       GenLetRec cenv cgbuf eenv (binds,body,m) sequel
   | Expr.Let (bind,body,_,_)  -> 
      // This case implemented here to get a guaranteed tailcall 
@@ -2430,6 +2433,7 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
         (* when branch-calling methods we must have the right type parameters *)
         begin match kind with
           | BranchCallClosure _ -> true
+          | BranchCallJoin _ -> true
           | BranchCallMethod (_,_,tps,_,_)  ->  
               (List.lengthsEqAndForall2 (fun ty tp -> typeEquiv cenv.g ty (mkTyparTy tp)) tyargs tps)
         end &&
@@ -2438,6 +2442,7 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
            match kind with
            | BranchCallClosure arityInfo
            | BranchCallMethod (arityInfo,_,_,_,_)  ->  arityInfo
+           | BranchCallJoin reps -> [for _ in reps -> 1] //crusso: TBR
          arityInfo.Length = args.Length
         ) &&
         (* no tailcall out of exception handler, etc. *)
@@ -2448,6 +2453,11 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
           match kind with
           | BranchCallClosure arityInfo ->
               let ntmargs = List.foldBack (+) arityInfo 0
+              GenExprs cenv cgbuf eenv args
+              ntmargs
+          | BranchCallJoin reps ->
+              let arityInfo = [for _ in reps -> 1]// crusso TBR
+              let ntmargs = List.foldBack (+) arityInfo 0 
               GenExprs cenv cgbuf eenv args
               ntmargs
           | BranchCallMethod (arityInfo,curriedArgInfos,_,ntmargs,numObjArgs)  ->
@@ -2462,7 +2472,18 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
                 | _ -> ntmargs    
               else ntmargs
 
-        for i = ntmargs - 1 downto 0 do 
+        match kind with
+        | BranchCallJoin reps ->
+            for i = ntmargs - 1 downto 0 do 
+                let local = reps.[i]
+                match local with
+                | None -> assert(false) 
+                          () // should we pop?
+                | Some (ValStorage.Local(i,None)) ->
+                  CG.EmitInstrs cgbuf (pop 1) Push0 [ I_stloc (uint16 i) ]
+                | _ -> assert(false)
+        | _ ->
+            for i = ntmargs - 1 downto 0 do 
             CG.EmitInstrs cgbuf (pop 1) Push0 [ I_starg (uint16 (i+cgbuf.PreallocatedArgCount)) ]
 
         CG.EmitInstrs cgbuf (pop 0) Push0 [ I_br mark.CodeLabel ]
@@ -4608,6 +4629,47 @@ and GenLetRec cenv cgbuf eenv (binds,body,m) sequel =
     let sp = if List.exists (BindingEmitsSequencePoint cenv.g) binds then SPAlways else SPSuppress 
     GenExpr cenv cgbuf eenv sp body (EndLocalScope(sequel,endScope))
 
+ (* 
+ and GenWhileLoop cenv cgbuf eenv (spWhile,e1,e2,m) sequel =
+    let finish = CG.GenerateDelayMark cgbuf "while_finish" 
+    let startTest = CG.GenerateMark cgbuf "startTest"
+    
+    match spWhile with 
+    | SequencePointAtWhileLoop(spStart) -> CG.EmitSeqPoint cgbuf  spStart
+    | NoSequencePointAtWhileLoop -> ()
+
+    // SEQUENCE POINTS: Emit a sequence point to cover all of 'while e do' 
+    GenExpr cenv cgbuf eenv SPSuppress e1 (CmpThenBrOrContinue (pop 1, [ I_brcmp(BI_brfalse,finish.CodeLabel) ]))
+    
+    GenExpr cenv cgbuf eenv SPAlways e2 (DiscardThen (Br startTest))
+    CG.SetMarkToHere cgbuf finish 
+
+    // SEQUENCE POINTS: Emit a sequence point to cover 'done' if present 
+    GenUnitThenSequel cenv eenv m eenv.cloc cgbuf sequel
+ 
+ *)
+
+and GenLetJoinBind  cenv cgbuf eenv sequel mark bind = 
+    match bind  with
+    | TBind(_v,Expr.TyLambda(_,_,Expr.Lambda(_,_,_,_xs,e,_,_),_,_),_) ->
+        CG.SetMarkToHere cgbuf mark
+        GenExpr cenv cgbuf eenv SPAlways e sequel
+    | _ -> ()
+
+and GenLetJoin  cenv cgbuf eenv (binds,body,_m) sequel =
+    let _,endScope as scopeMarks = StartLocalScope "letjoin" cgbuf
+    let marks, eenv = AllocStorageForJoins cenv cgbuf scopeMarks eenv binds
+    
+    let bodyMark = CG.GenerateDelayMark cgbuf "body"
+    
+    do CG.EmitInstr cgbuf (pop 0) [] (I_br bodyMark.CodeLabel)
+
+    do List.iter2 (GenLetJoinBind cenv cgbuf eenv (Br endScope)) marks binds
+    
+    let sp = if List.exists (BindingEmitsSequencePoint cenv.g) binds then SPAlways else SPSuppress 
+    CG.SetMarkToHere cgbuf bodyMark
+    GenExpr cenv cgbuf eenv sp body (EndLocalScope(sequel,endScope))
+
 //-------------------------------------------------------------------------
 // Generate simple bindings
 //------------------------------------------------------------------------- 
@@ -5552,6 +5614,24 @@ and AllocValForBind cenv cgbuf (scopeMarks: Mark * Mark) eenv (TBind(v,repr,_)) 
         AllocLocalVal cenv cgbuf v eenv (Some repr) scopeMarks
     | Some _ -> 
         None,AllocTopValWithinExpr cenv cgbuf eenv.cloc scopeMarks v eenv
+
+and AllocValsForBind cenv cgbuf (scopeMarks: Mark * Mark) eenv (TBind(_v,repr,_)) =
+    match repr with
+    | Expr.TyLambda(_,_,Expr.Lambda(_,_,_,xs,_body,_,_),_,_) ->
+        let reps, eenv =  List.mapFold (fun eenv x -> AllocLocalVal cenv cgbuf x eenv None scopeMarks) eenv xs
+        reps, eenv
+    | _ -> [], eenv
+    //crusso
+and AllocMarkForReps _cenv cgbuf (_scopeMarks: Mark * Mark) eenv (TBind(v,_expr,_),repr) =
+    let mark = CG.GenerateDelayMark cgbuf v.Id 
+    let valref =  {binding = v;nlr= Unchecked.defaultof<_>}
+    mark, {eenv with innerVals = (valref, (BranchCallItem.BranchCallJoin(repr),mark))::eenv.innerVals}
+
+
+and AllocStorageForJoins cenv cgbuf scopeMarks eenv binds = 
+    let reps, eenv = List.mapFold (AllocValsForBind cenv cgbuf scopeMarks) eenv binds 
+    let marks, eenv = List.mapFold (AllocMarkForReps cenv cgbuf scopeMarks) eenv (List.zip binds reps)
+    marks,eenv
 
 
 and AllocTopValWithinExpr cenv cgbuf cloc scopeMarks v eenv =
