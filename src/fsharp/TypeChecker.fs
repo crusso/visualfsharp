@@ -11781,15 +11781,22 @@ and TcLetJoin  overridesOK cenv env tpenv overallTy (binds,bindsm,scopem) =
     let binds = binds |> List.map (fun (RecDefnBindingInfo(a,b,c,bind)) -> NormalizedRecBindingDefn(a,b,c,BindingNormalization.NormalizeBinding ValOrMemberBinding cenv env bind))
     let uncheckedRecBinds,prelimRecValues,(tpenv,_) = AnalyzeAndMakeAndPublishRecursiveValues overridesOK cenv env tpenv binds
 
-    let genType (t:TType) =
-        let alpha = NewRigidTypar "Answer" bindsm
-        let rec genRange t = 
-            match t with
-            | TType_fun(dom,rng) -> TType_fun(dom,genRange rng)
-            | _ -> TType_var alpha
-        TType.TType_forall([alpha],genRange t)
+    let arities = binds |> List.map (fun (NormalizedRecBindingDefn(_,_,_,nb)) -> 
+                                       match nb with
+                                       | NormalizedBinding(_,_,_,_,_,_,_,_,_,nbrhs,_,_) ->
+                                         match nbrhs with
+                                         | NormalizedBindingRhs(pats,_,_) ->
+                                           List.length(pats))
 
-    do  List.iter (fun v -> v.val_type <- genType v.val_type) prelimRecValues
+    let genType (arity:int) =
+        let alpha = NewRigidTypar "Answer" bindsm
+        let rec genRange n = 
+            match n with
+            | 0 -> TType_var alpha
+            | n -> TType_fun(NewInferenceType(),genRange (n-1))
+        TType.TType_forall([alpha],genRange arity)
+
+    do  List.iter2 (fun v a -> v.val_type <- genType a) prelimRecValues arities
    
     let envRec = AddLocalVals cenv.tcSink scopem prelimRecValues env 
     
