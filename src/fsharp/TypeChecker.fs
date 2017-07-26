@@ -10093,11 +10093,12 @@ and TcLinearExprs bodyChecker cenv env overallTy tpenv isCompExpr expr cont =
             cont (bodyExpr,tpenv)
 
         else if isJoin then
+                 //crusso
                  // TcLinearExprs processes at most one recursive binding, this is not tailcalling
                  CheckRecursiveBindingIds binds
                  let binds = List.map (fun x -> RecDefnBindingInfo(ExprContainerInfo,NoNewSlots,ExpressionBinding,x)) binds
                  if isUse then errorR(Error(FSComp.SR.tcBindingCannotBeUseAndRec(),m))
-                 let binds,envinner,tpenv = TcLetrec ErrorOnOverrides cenv env tpenv (binds,m,m)
+                 let binds,envinner,tpenv = TcLetJoin ErrorOnOverrides cenv env tpenv overallTy (binds,m,m) 
                  let bodyExpr,tpenv = bodyChecker overallTy envinner tpenv body 
                  let bodyExpr = bindLetJoin binds m bodyExpr
                  cont (bodyExpr,tpenv)
@@ -11265,7 +11266,8 @@ and AnalyzeAndMakeAndPublishRecursiveValues overridesOK cenv env tpenv binds =
 //-------------------------------------------------------------------------
 
 and TcLetrecBinding 
-         (cenv, envRec: TcEnv, scopem, extraGeneralizableTypars: Typars, reqdThisValTyOpt: TType option)
+         
+         (cenv, envRec: TcEnv, scopem, extraGeneralizableTypars: Typars, reqdThisValTyOpt: TType option, overallTyOpt:  TType option )
          
          // The state of the left-to-right iteration through the bindings
          (envNonRec: TcEnv, 
@@ -11313,8 +11315,23 @@ and TcLetrecBinding
     let checkedBind,tpenv = 
         TcNormalizedBinding declKind cenv envRec tpenv tau safeThisValOpt safeInitInfo (enclosingDeclaredTypars,flex) rbind.SyntacticBinding
 
-    (try UnifyTypes cenv envRec vspec.Range (allDeclaredTypars +-> tau) vspec.Type 
-     with e -> error (Recursion(envRec.DisplayEnv,vspec.Id,tau,vspec.Type,vspec.Range)))
+    let expectedType = match overallTyOpt with
+                       | None -> vspec.Type
+                       | Some overallTy -> 
+                          let specType (t:TType) =
+                              match t with
+                              | TType_forall([alpha],t) ->
+                                  let rec specRange t = 
+                                      match t with
+                                      | TType_fun(dom,rng) -> TType_fun(dom,specRange rng)
+                                      | TType_var beta when typarEq alpha beta-> overallTy
+                                      | other -> other
+                                  specRange t
+                              | other -> other
+                          specType vspec.Type
+    
+    (try UnifyTypes cenv envRec vspec.Range (allDeclaredTypars +-> tau) expectedType 
+     with e -> error (Recursion(envRec.DisplayEnv,vspec.Id,tau, expectedType,vspec.Range)))
 
     // Inside the incremental class syntax we assert the type of the 'this' variable to be precisely the same type as the 
     // this variable for the implicit class constructor. For static members, we assert the type variables associated
@@ -11716,7 +11733,7 @@ and TcLetrec  overridesOK cenv env tpenv (binds,bindsm,scopem) =
     let uncheckedRecBindsTable = uncheckedRecBinds  |> List.map (fun rbind  ->  rbind.RecBindingInfo.Val.Stamp, rbind) |> Map.ofList 
 
     let (_,generalizedRecBinds,preGeneralizationRecBinds,tpenv,_) = 
-        ((env,[],[],tpenv,uncheckedRecBindsTable),uncheckedRecBinds) ||> List.fold (TcLetrecBinding (cenv,envRec,scopem,[],None)) 
+        ((env,[],[],tpenv,uncheckedRecBindsTable),uncheckedRecBinds) ||> List.fold (TcLetrecBinding (cenv,envRec,scopem,[],None, None)) 
 
     // There should be no bindings that have not been generalized since checking the vary last binding always
     // results in the generalization of all remaining ungeneralized bindings, since there are no remaining unchecked bindings
@@ -11759,18 +11776,28 @@ and TcLetrec  overridesOK cenv env tpenv (binds,bindsm,scopem) =
     let envbody = AddLocalVals cenv.tcSink scopem prelimRecValues env 
     binds,envbody,tpenv
 
-and TcLetJoin  overridesOK cenv env tpenv (binds,bindsm,scopem) =
+and TcLetJoin  overridesOK cenv env tpenv overallTy (binds,bindsm,scopem) =
     // Create prelimRecValues for the recursive items (includes type info from LHS of bindings) *)
     let binds = binds |> List.map (fun (RecDefnBindingInfo(a,b,c,bind)) -> NormalizedRecBindingDefn(a,b,c,BindingNormalization.NormalizeBinding ValOrMemberBinding cenv env bind))
     let uncheckedRecBinds,prelimRecValues,(tpenv,_) = AnalyzeAndMakeAndPublishRecursiveValues overridesOK cenv env tpenv binds
 
+    let genType (t:TType) =
+        let alpha = NewRigidTypar "Answer" bindsm
+        let rec genRange t = 
+            match t with
+            | TType_fun(dom,rng) -> TType_fun(dom,genRange rng)
+            | _ -> TType_var alpha
+        TType.TType_forall([alpha],genRange t)
+
+    do  List.iter (fun v -> v.val_type <- genType v.val_type) prelimRecValues
+   
     let envRec = AddLocalVals cenv.tcSink scopem prelimRecValues env 
     
     // Typecheck bindings 
     let uncheckedRecBindsTable = uncheckedRecBinds  |> List.map (fun rbind  ->  rbind.RecBindingInfo.Val.Stamp, rbind) |> Map.ofList 
 
     let (_,generalizedRecBinds,preGeneralizationRecBinds,tpenv,_) = 
-        ((env,[],[],tpenv,uncheckedRecBindsTable),uncheckedRecBinds) ||> List.fold (TcLetrecBinding (cenv,envRec,scopem,[],None)) 
+        ((env,[],[],tpenv,uncheckedRecBindsTable),uncheckedRecBinds) ||> List.fold (TcLetrecBinding (cenv,envRec,scopem,[],None,Some overallTy)) 
 
     // There should be no bindings that have not been generalized since checking the vary last binding always
     // results in the generalization of all remaining ungeneralized bindings, since there are no remaining unchecked bindings
@@ -13219,7 +13246,7 @@ module MutRecBindingChecking =
 
                         let (tpenv,envStatic,envNonRec,generalizedRecBinds,preGeneralizationRecBinds,uncheckedRecBindsTable) = innerState
 
-                        let (envNonRec, generalizedRecBinds, preGeneralizationRecBinds, _, uncheckedRecBindsTable) = TcLetrecBinding (cenv,envStatic,scopem,[],None) (envNonRec, generalizedRecBinds, preGeneralizationRecBinds, tpenv, uncheckedRecBindsTable) rbind
+                        let (envNonRec, generalizedRecBinds, preGeneralizationRecBinds, _, uncheckedRecBindsTable) = TcLetrecBinding (cenv,envStatic,scopem,[],None,None) (envNonRec, generalizedRecBinds, preGeneralizationRecBinds, tpenv, uncheckedRecBindsTable) rbind
                              
                         let innerState = (tpenv, envStatic, envNonRec, generalizedRecBinds, preGeneralizationRecBinds, uncheckedRecBindsTable)
                         rbind.RecBindingInfo.Index, innerState)
@@ -13366,7 +13393,7 @@ module MutRecBindingChecking =
                             // Type check the member and apply early generalization.
                             // We ignore the tpenv returned by checking each member. Each member gets checked in a fresh, clean tpenv
                             let (envNonRec, generalizedRecBinds, preGeneralizationRecBinds, _, uncheckedRecBindsTable) = 
-                                TcLetrecBinding (cenv,envForBinding,scopem,extraGeneralizableTypars,reqdThisValTyOpt) (envNonRec, generalizedRecBinds, preGeneralizationRecBinds, tpenv, uncheckedRecBindsTable) rbind
+                                TcLetrecBinding (cenv,envForBinding,scopem,extraGeneralizableTypars,reqdThisValTyOpt,None) (envNonRec, generalizedRecBinds, preGeneralizationRecBinds, tpenv, uncheckedRecBindsTable) rbind
                              
                             let innerState = (tpenv, envInstance, envStatic, envNonRec, generalizedRecBinds, preGeneralizationRecBinds, uncheckedRecBindsTable)
                             Phase2BMember rbind.RecBindingInfo.Index, innerState)
