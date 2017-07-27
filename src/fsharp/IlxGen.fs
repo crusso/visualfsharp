@@ -2491,18 +2491,18 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
                 | None -> assert(false) 
                           () // should we pop?
                 | Some (ValStorage.Local(i,None)) ->
-                  let resty = 
-                    match tyargs with 
-                    |  [ty] -> GenType cenv.amap m eenv.tyenv ty
-                    | _ -> assert false; 
-                           ILType.Void
-                  // todo: pop the stack back to body depth
                   CG.EmitInstrs cgbuf (pop 1) Push0 [ I_stloc (uint16 i) ]
-                  CG.EmitInstrs cgbuf (pop 0) [resty] [ I_br mark.CodeLabel ]
                 | _ -> assert(false)
+            let resty = 
+                match tyargs with 
+                |  [ty] -> GenType cenv.amap m eenv.tyenv ty
+                | _ -> assert false; 
+                       ILType.Void
+            // todo: pop the stack back to body depth
+            CG.EmitInstrs cgbuf (pop 0) [resty] [ I_br mark.CodeLabel ]
         | _ ->
             for i = ntmargs - 1 downto 0 do 
-            CG.EmitInstrs cgbuf (pop 1) Push0 [ I_starg (uint16 (i+cgbuf.PreallocatedArgCount)) ]
+              CG.EmitInstrs cgbuf (pop 1) Push0 [ I_starg (uint16 (i+cgbuf.PreallocatedArgCount)) ]
             CG.EmitInstrs cgbuf (pop 0) Push0 [ I_br mark.CodeLabel ]
 
         GenSequelEndScopes cgbuf sequel
@@ -4678,15 +4678,17 @@ and GenLetJoin  cenv cgbuf eenv (binds,body,_m) sequel =
     let marks, eenv = AllocStorageForJoins cenv cgbuf scopeMarks eenv binds
     
     let bodyMark = CG.GenerateDelayMark cgbuf "body"
+    let sequelMark = CG.GenerateDelayMark cgbuf "sequel"
     
     do CG.EmitInstr cgbuf (pop 0) [] (I_br bodyMark.CodeLabel)
 
-    do List.iter2 (GenLetJoinBind cenv cgbuf eenv (Br endScope)) marks binds
+    do List.iter2 (GenLetJoinBind cenv cgbuf eenv (Br sequelMark)) marks binds
     
     let sp = if List.exists (BindingEmitsSequencePoint cenv.g) binds then SPAlways else SPSuppress 
     CG.SetMarkToHere cgbuf bodyMark
     //GenExpr cenv cgbuf eenv sp body (EndLocalScope(sequel,endScope))
     GenExpr cenv cgbuf eenv sp body (EndLocalScope(Continue,endScope))
+    CG.SetMarkToHere cgbuf sequelMark
     GenSequel cenv eenv.cloc cgbuf sequel //does this wreck tailcalls?
 
 //-------------------------------------------------------------------------
