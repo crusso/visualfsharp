@@ -2451,8 +2451,13 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
            | BranchCallJoin reps -> [for _ in reps -> 1] //crusso: TBR
          arityInfo.Length = args.Length
         ) &&
-        (* no tailcall out of exception handler, etc. *)
-        (match sequelIgnoringEndScopesAndDiscard sequel with Return | ReturnVoid -> true | _ -> false))
+        (//is this a valid tail call?
+         match kind with 
+         | BranchCallJoin _ -> 
+            true //TODO handle jump from within exception handler (emit .leave?)
+         | _ ->
+           (* no tailcall out of exception handler, etc. *) // this seems to rule out tailcalls from nested branches with pending gotos?
+           (match sequelIgnoringEndScopesAndDiscard sequel with Return | ReturnVoid -> true | _ -> false)))
     -> 
         let (kind,mark) = ListAssoc.find cenv.g.valRefEq v eenv.innerVals
         let ntmargs = 
@@ -2486,13 +2491,19 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
                 | None -> assert(false) 
                           () // should we pop?
                 | Some (ValStorage.Local(i,None)) ->
+                  let resty = 
+                    match tyargs with 
+                    |  [ty] -> GenType cenv.amap m eenv.tyenv ty
+                    | _ -> assert false; 
+                           ILType.Void
+                  // todo: pop the stack back to body depth
                   CG.EmitInstrs cgbuf (pop 1) Push0 [ I_stloc (uint16 i) ]
+                  CG.EmitInstrs cgbuf (pop 0) [resty] [ I_br mark.CodeLabel ]
                 | _ -> assert(false)
         | _ ->
             for i = ntmargs - 1 downto 0 do 
             CG.EmitInstrs cgbuf (pop 1) Push0 [ I_starg (uint16 (i+cgbuf.PreallocatedArgCount)) ]
-
-        CG.EmitInstrs cgbuf (pop 0) Push0 [ I_br mark.CodeLabel ]
+            CG.EmitInstrs cgbuf (pop 0) Push0 [ I_br mark.CodeLabel ]
 
         GenSequelEndScopes cgbuf sequel
         
@@ -4674,7 +4685,9 @@ and GenLetJoin  cenv cgbuf eenv (binds,body,_m) sequel =
     
     let sp = if List.exists (BindingEmitsSequencePoint cenv.g) binds then SPAlways else SPSuppress 
     CG.SetMarkToHere cgbuf bodyMark
-    GenExpr cenv cgbuf eenv sp body (EndLocalScope(sequel,endScope))
+    //GenExpr cenv cgbuf eenv sp body (EndLocalScope(sequel,endScope))
+    GenExpr cenv cgbuf eenv sp body (EndLocalScope(Continue,endScope))
+    GenSequel cenv eenv.cloc cgbuf sequel //does this wreck tailcalls?
 
 //-------------------------------------------------------------------------
 // Generate simple bindings
