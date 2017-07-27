@@ -4198,7 +4198,10 @@ and accFreeInExprNonLinear opts x acc =
         unionFreeVars (accFreeTyvars opts boundTypars vs (accFreeVarsInTy opts rty (freeInExpr opts b))) acc
     | Expr.TyChoose (vs,b,_) ->
         unionFreeVars (accFreeTyvars opts boundTypars vs (freeInExpr opts b)) acc
-    | Expr.LetRec (binds,e,_,cache) | Expr.LetJoin(binds,e,_,cache) ->
+    | Expr.LetRec (binds,e,_,cache) ->
+        unionFreeVars (freeVarsCacheCompute opts cache (fun () -> List.foldBack (bindLhs opts) binds (List.foldBack (accBindRhs opts) binds (freeInExpr opts e)))) acc
+    | Expr.LetJoin(binds,e,_,cache) ->
+        //crusso
         unionFreeVars (freeVarsCacheCompute opts cache (fun () -> List.foldBack (bindLhs opts) binds (List.foldBack (accBindRhs opts) binds (freeInExpr opts e)))) acc
     | Expr.Let _ -> 
         failwith "unreachable - linear expr"

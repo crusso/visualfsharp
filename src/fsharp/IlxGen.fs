@@ -740,12 +740,18 @@ let StorageForVal m v eenv =
     let v = 
         try eenv.valsInScope.[v]
         with :? KeyNotFoundException ->
-          assert false
-          errorR(Error(FSComp.SR.ilUndefinedValue(showL(vspecAtBindL v)),m)) 
-          notlazy (Arg 668(* random value for post-hoc diagnostic analysis on generated tree *) )
+          match List.tryFind (fun ({binding=v'}:ValRef, _) ->  valEq v v') eenv.innerVals with
+          | Some (_,((BranchCallJoin _),_)) -> notlazy Null
+          | _->
+                  assert false
+                  errorR(Error(FSComp.SR.ilUndefinedValue(showL(vspecAtBindL v)),m)) 
+                  notlazy (Arg 668(* random value for post-hoc diagnostic analysis on generated tree *) )
     v.Force()
 
-let StorageForValRef m (v: ValRef) eenv = StorageForVal m v.Deref eenv
+let StorageForValRef m ({binding=v} as vr: ValRef) eenv = 
+    match List.tryFind (fun ({binding=v'}:ValRef, _) ->  valEq v v') eenv.innerVals with
+    | Some (_,((BranchCallJoin _),_)) -> Null
+    | _ -> StorageForVal m vr.Deref eenv
 
 //--------------------------------------------------------------------------
 // Imported modules and the environment
@@ -5615,9 +5621,10 @@ and AllocValForBind cenv cgbuf (scopeMarks: Mark * Mark) eenv (TBind(v,repr,_)) 
     | Some _ -> 
         None,AllocTopValWithinExpr cenv cgbuf eenv.cloc scopeMarks v eenv
 
-and AllocValsForBind cenv cgbuf (scopeMarks: Mark * Mark) eenv (TBind(_v,repr,_)) =
+and AllocValsForBind cenv cgbuf (scopeMarks: Mark * Mark) eenv (TBind(v,repr,_)) =
     match repr with
     | Expr.TyLambda(_,_,Expr.Lambda(_,_,_,xs,_body,_,_),_,_) ->
+        let eenv =  AddStorageForVal cenv.g (v,notlazy Null) eenv
         let reps, eenv =  List.mapFold (fun eenv x -> AllocLocalVal cenv cgbuf x eenv None scopeMarks) eenv xs
         reps, eenv
     | _ -> [], eenv
