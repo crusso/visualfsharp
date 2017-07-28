@@ -649,7 +649,13 @@ and BranchCallItem =
         int *
         // num obj args 
         int 
-     | BranchCallJoin of ValStorage option list
+     | BranchCallJoin of 
+        // stackDepth on entry to body - need to pop pack to this before jump
+        int *
+        // Argument counts for compiled form  of F# method or value
+        ArityInfo *
+        // storage for each argument
+        ValStorage option list
       
 and Mark = 
     | Mark of ILCodeLabel (* places we can branch to  *)
@@ -2448,7 +2454,7 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
            match kind with
            | BranchCallClosure arityInfo
            | BranchCallMethod (arityInfo,_,_,_,_)  ->  arityInfo
-           | BranchCallJoin reps -> [for _ in reps -> 1] //crusso: TBR
+           | BranchCallJoin (_stackDepth,arityInfo,_reps) -> arityInfo
          arityInfo.Length = args.Length
         ) &&
         (//is this a valid tail call?
@@ -2466,8 +2472,8 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
               let ntmargs = List.foldBack (+) arityInfo 0
               GenExprs cenv cgbuf eenv args
               ntmargs
-          | BranchCallJoin reps ->
-              let arityInfo = [for _ in reps -> 1]// crusso TBR
+          | BranchCallJoin (_stackDepth, arityInfo, _reps) ->
+              //let arityInfo = [for _ in reps -> 1]// crusso TBR
               let ntmargs = List.foldBack (+) arityInfo 0 
               GenExprs cenv cgbuf eenv args
               ntmargs
@@ -2484,7 +2490,7 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
               else ntmargs
 
         match kind with
-        | BranchCallJoin reps ->
+        | BranchCallJoin (stackDepth, _arityInfo,reps) ->
             for i = ntmargs - 1 downto 0 do 
                 let local = reps.[i]
                 match local with
@@ -2499,7 +2505,12 @@ and GenApp cenv cgbuf eenv (f,fty,tyargs,args,m) sequel =
                 | _ -> assert false; 
                        ILType.Void
             // todo: pop the stack back to body depth
+            let diff = List.length(cgbuf.GetCurrentStack())-stackDepth
+            for i = diff - 1 downto 0 do 
+              CG.EmitInstr cgbuf (pop 1) Push0 AI_pop 
+            assert (List.length(cgbuf.GetCurrentStack()) = stackDepth)
             CG.EmitInstrs cgbuf (pop 0) [resty] [ I_br mark.CodeLabel ]
+            //GenSequel cenv eenv.cloc cgbuf sequel?
         | _ ->
             for i = ntmargs - 1 downto 0 do 
               CG.EmitInstrs cgbuf (pop 1) Push0 [ I_starg (uint16 (i+cgbuf.PreallocatedArgCount)) ]
@@ -4668,7 +4679,8 @@ and GenLetRec cenv cgbuf eenv (binds,body,m) sequel =
 
 and GenLetJoinBind  cenv cgbuf eenv sequel mark bind = 
     match bind  with
-    | TBind(_v,Expr.TyLambda(_,_,Expr.Lambda(_,_,_,_xs,e,_,_),_,_),_) ->
+    | TBind(_v,(Expr.TyLambda(_,_,Expr.Lambda(_,_,_,_xs,_e,_,_),_,forallty) as repr),_) ->
+        let (_,_xss,e,_t) = stripTopLambda (repr,forallty) 
         CG.SetMarkToHere cgbuf mark
         GenExpr cenv cgbuf eenv SPAlways e sequel
     | _ -> ()
@@ -5638,16 +5650,25 @@ and AllocValForBind cenv cgbuf (scopeMarks: Mark * Mark) eenv (TBind(v,repr,_)) 
 
 and AllocValsForBind cenv cgbuf (scopeMarks: Mark * Mark) eenv (TBind(v,repr,_)) =
     match repr with
-    | Expr.TyLambda(_,_,Expr.Lambda(_,_,_,xs,_body,_,_),_,_) ->
+    | Expr.TyLambda(_,_,Expr.Lambda(_,_,_,_xs,_body,_,_),_,forallty) ->
+        let (_,xss,_e,_t) = stripTopLambda (repr,forallty) 
+        let xs = List.concat xss
         let eenv =  AddStorageForVal cenv.g (v,notlazy Null) eenv
         let reps, eenv =  List.mapFold (fun eenv x -> AllocLocalVal cenv cgbuf x eenv None scopeMarks) eenv xs
         reps, eenv
-    | _ -> [], eenv
+    | _ ->
+        assert(false);
+        [], eenv
     //crusso
-and AllocMarkForReps _cenv cgbuf (_scopeMarks: Mark * Mark) eenv (TBind(v,_expr,_),repr) =
+and AllocMarkForReps _cenv (cgbuf:CodeGenBuffer) (_scopeMarks: Mark * Mark) eenv (TBind(v,_expr,_),repr) =
+    let stackDepth = List.length(cgbuf.GetCurrentStack())
+    let arityInfo = match v.ValReprInfo with 
+                    | Some vri-> vri.AritiesOfArgs
+                    | None -> assert(false);
+                              []
     let mark = CG.GenerateDelayMark cgbuf v.Id 
     let valref =  {binding = v;nlr= Unchecked.defaultof<_>}
-    mark, {eenv with innerVals = (valref, (BranchCallItem.BranchCallJoin(repr),mark))::eenv.innerVals}
+    mark, {eenv with innerVals = (valref, (BranchCallItem.BranchCallJoin(stackDepth, arityInfo, repr),mark))::eenv.innerVals}
 
 
 and AllocStorageForJoins cenv cgbuf scopeMarks eenv binds = 
