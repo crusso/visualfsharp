@@ -4677,12 +4677,14 @@ and GenLetRec cenv cgbuf eenv (binds,body,m) sequel =
  
  *)
 
-and GenLetJoinBind  cenv cgbuf eenv sequel mark bind = 
+and GenLetJoinBind  cenv (cgbuf:CodeGenBuffer) eenv stack sequel mark bind = 
     match bind  with
     | TBind(_v,(Expr.TyLambda(_,_,Expr.Lambda(_,_,_,_xs,_e,_,_),_,forallty) as repr),_) ->
         let (_,_xss,e,_t) = stripTopLambda (repr,forallty) 
+        cgbuf.SetStack(stack)
         CG.SetMarkToHere cgbuf mark
         GenExpr cenv cgbuf eenv SPAlways e sequel
+        //cgbuf.DoPops(1)
     | _ -> ()
 
 and GenLetJoin  cenv cgbuf eenv (binds,body,_m) sequel =
@@ -4694,10 +4696,14 @@ and GenLetJoin  cenv cgbuf eenv (binds,body,_m) sequel =
     
     do CG.EmitInstr cgbuf (pop 0) [] (I_br bodyMark.CodeLabel)
 
-    do List.iter2 (GenLetJoinBind cenv cgbuf eenv (Br sequelMark)) marks binds
-    
+    let stack = cgbuf.GetCurrentStack();
+
+    do List.iter2 (GenLetJoinBind cenv cgbuf eenv stack (Br sequelMark)) marks binds
+
     let sp = if List.exists (BindingEmitsSequencePoint cenv.g) binds then SPAlways else SPSuppress 
     CG.SetMarkToHere cgbuf bodyMark
+
+    cgbuf.SetStack(stack)
     //GenExpr cenv cgbuf eenv sp body (EndLocalScope(sequel,endScope))
     GenExpr cenv cgbuf eenv sp body (EndLocalScope(Continue,endScope))
     CG.SetMarkToHere cgbuf sequelMark
@@ -5660,12 +5666,14 @@ and AllocValsForBind cenv cgbuf (scopeMarks: Mark * Mark) eenv (TBind(v,repr,_))
         assert(false);
         [], eenv
     //crusso
-and AllocMarkForReps _cenv (cgbuf:CodeGenBuffer) (_scopeMarks: Mark * Mark) eenv (TBind(v,_expr,_),repr) =
+and AllocMarkForReps cenv (cgbuf:CodeGenBuffer) (_scopeMarks: Mark * Mark) eenv (TBind(v,expr,_),repr) =
     let stackDepth = List.length(cgbuf.GetCurrentStack())
-    let arityInfo = match v.ValReprInfo with 
-                    | Some vri-> vri.AritiesOfArgs
-                    | None -> assert(false);
-                              []
+    //let arityInfo = match v.ValReprInfo with 
+    //                | Some vri-> vri.AritiesOfArgs
+    //                | None -> assert(false);
+    //                          []
+    let valRepInfo = InferArityOfExprBinding cenv.g AllowTypeDirectedDetupling.No (*?*) v expr
+    let arityInfo  = valRepInfo.AritiesOfArgs
     let mark = CG.GenerateDelayMark cgbuf v.Id 
     let valref =  {binding = v;nlr= Unchecked.defaultof<_>}
     mark, {eenv with innerVals = (valref, (BranchCallItem.BranchCallJoin(stackDepth, arityInfo, repr),mark))::eenv.innerVals}

@@ -1,7 +1,7 @@
 
 
 let test0() = 
-    let join a x y = 1
+    let join a (x:int) (y:int) :int = 1
     in  
        a 1 2 
 

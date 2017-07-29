@@ -11786,7 +11786,7 @@ and TcLetJoin  overridesOK cenv env tpenv overallTy (binds,bindsm,scopem) =
                                        | NormalizedBinding(_,_,_,_,_,_,_,_,_,nbrhs,_,_) ->
                                          match nbrhs with
                                          | NormalizedBindingRhs(pats,_,_) ->
-                                           List.length(pats))
+                                           List.length(pats)) // TBR
 
     let genType (arity:int) =
         let alpha = NewRigidTypar "Answer" bindsm
@@ -11796,7 +11796,9 @@ and TcLetJoin  overridesOK cenv env tpenv overallTy (binds,bindsm,scopem) =
             | n -> TType_fun(NewInferenceType(),genRange (n-1))
         TType.TType_forall([alpha],genRange arity)
 
-    do  List.iter2 (fun v a -> v.val_type <- genType a) prelimRecValues arities
+    do  List.iter2 (fun v a -> 
+                    v.val_flags <- v.val_flags.SetInlineInfo(ValInline.Never)
+                    v.val_type <- genType a) prelimRecValues arities
    
     let envRec = AddLocalVals cenv.tcSink scopem prelimRecValues env 
     

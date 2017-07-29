@@ -1710,7 +1710,11 @@ let rec OptimizeExpr cenv (env:IncrementalOptimizationEnv) expr =
     | Expr.TyChoose _  -> OptimizeExpr cenv env (TypeRelations.ChooseTyparSolutionsForFreeChoiceTypars cenv.g cenv.amap expr)
     | Expr.Match(spMatch,exprm,dtree,targets,m,ty) -> OptimizeMatch cenv env (spMatch,exprm,dtree,targets,m,ty)
     | Expr.LetRec (binds,e,m,_) ->  OptimizeLetRec cenv env (binds,e,m)
-    | Expr.LetJoin (binds,e,m,_) -> OptimizeLetJoin cenv env (binds,e,m)
+    | Expr.LetJoin (binds,e,m,_) -> 
+        OptimizeLetJoin cenv env (binds,e,m) 
+        //let e',einfo = OptimizeExpr cenv env e
+        //Expr.LetJoin(binds,e',m,fvc), einfo
+
     | Expr.StaticOptimization (constraints,e2,e3,m) ->
         let e2',e2info = OptimizeExpr cenv env e2
         let e3',e3info = OptimizeExpr cenv env e3
@@ -2034,7 +2038,26 @@ and OptimizeLetThing thingCtor cenv env (binds : Bindings,bodyExpr,m) =
     bodyExpr', info
 and OptimizeLetRec = OptimizeLetThing (Expr.LetRec)
 and OptimizeLetJoin = OptimizeLetThing (Expr.LetJoin)
-
+(*
+and OptimizeLetJoin  cenv env (binds : Bindings,bodyExpr,m) =
+    let vs = binds |> List.map (fun v -> v.Var) 
+    do vs |> List.iter (fun (v:Val) -> v.val_flags <- v.val_flags.SetInlineInfo(ValInline.Never)) //the only diff from OptimizeLetRec.
+    let env = BindInternalValsToUnknown cenv vs env 
+    let binds',env = OptimizeBindings cenv true env binds 
+    let bodyExpr',einfo = OptimizeExpr cenv env bodyExpr 
+    // REVIEW: graph analysis to determine which items are unused 
+    // Eliminate any unused bindings, as in let case 
+    let binds'',bindinfos = 
+        let fvs0 = freeInExpr CollectLocals bodyExpr' 
+        let fvs = List.fold (fun acc x -> unionFreeVars acc (fst x |> freeInBindingRhs CollectLocals)) fvs0 binds'
+        SplitValuesByIsUsedOrHasEffect cenv (fun () -> fvs.FreeLocals) binds'
+    // Trim out any optimization info that involves escaping values 
+    let evalue' = AbstractExprInfoByVars (vs,[]) einfo.Info 
+    // REVIEW: size of constructing new closures - should probably add #freevars + #recfixups here 
+    let bodyExpr' = Expr.LetJoin(binds'',bodyExpr',m,NewFreeVarsCache()) 
+    let info = CombineValueInfos (einfo :: bindinfos) evalue' 
+    bodyExpr', info
+    *)
 //-------------------------------------------------------------------------
 // Optimize/analyze a linear sequence of sequentioanl execution or 'let' bindings.
 //------------------------------------------------------------------------- 
