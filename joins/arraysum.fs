@@ -14,6 +14,25 @@ let test(a:int[][]) =
     sumouter 0 0
 
 
+(*
+Matt's version
+// fails to peverify but runs ok
+let test(a:int[][]) =
+      sumouter 0 0
+      when sumouter (acc:int) (i:int) :int =
+        if (i<a.Length) 
+        then let ai = a.[i]  
+             suminner acc 0
+             when suminner (acc:int) (j:int) :int =
+                if (j<ai.Length) 
+                then suminner (acc+ai.[j]) (j+1)
+                else sumouter acc (i+1)
+               
+        else acc
+        *)
+   
+
+
 // fails to peverify but runs ok
 let test2(a:int[][]) =
     let l = a.Length
@@ -43,6 +62,20 @@ let testrec(a:int[][]) =
         else acc
     sumouter 0 0
 
+(* 
+// same code, using let rec not let join
+let testrecinline(a:int[][]) = 
+    let rec sumouter (acc:int) (i:int) :int =
+        if (i<a.Length) 
+        then let ai = a.[i]
+             let rec inline suminner (acc:int) (j:int) :int =
+                if (j<ai.Length) 
+                then suminner (acc+ai.[j]) (j+1)
+                else sumouter acc (i+1)
+             suminner acc 0
+        else acc
+    sumouter 0 0
+    *)
 
 // fastest: builtin for loops du to array bounds checking optimization?
 let testfor(a:int[][]) = 

@@ -11781,6 +11781,8 @@ and TcLetJoin  overridesOK cenv env tpenv overallTy (binds,bindsm,scopem) =
     let binds = binds |> List.map (fun (RecDefnBindingInfo(a,b,c,bind)) -> NormalizedRecBindingDefn(a,b,c,BindingNormalization.NormalizeBinding ValOrMemberBinding cenv env bind))
     let uncheckedRecBinds,prelimRecValues,(tpenv,_) = AnalyzeAndMakeAndPublishRecursiveValues overridesOK cenv env tpenv binds
 
+
+
     let arities = binds |> List.map (fun (NormalizedRecBindingDefn(_,_,_,nb)) -> 
                                        match nb with
                                        | NormalizedBinding(_,_,_,_,_,_,_,_,_,nbrhs,_,_) ->
@@ -11798,10 +11800,18 @@ and TcLetJoin  overridesOK cenv env tpenv overallTy (binds,bindsm,scopem) =
 
     do  List.iter2 (fun v a -> 
                     v.val_flags <- v.val_flags.SetInlineInfo(ValInline.Never)
-                    v.val_type <- genType a) prelimRecValues arities
-   
+                    v.val_flags <- v.val_flags.SetRecursiveValInfo(ValInRecScope(true)) 
+                    v.val_type <- genType a
+                    ) prelimRecValues arities
+
     let envRec = AddLocalVals cenv.tcSink scopem prelimRecValues env 
     
+    // prevent generalization of unification vars 
+    let env = 
+          List.fold  (fun env v -> 
+                      {env with eUngeneralizableItems =  addFreeItemOfTy v.val_type env.eUngeneralizableItems })
+                     env prelimRecValues
+
     // Typecheck bindings 
     let uncheckedRecBindsTable = uncheckedRecBinds  |> List.map (fun rbind  ->  rbind.RecBindingInfo.Val.Stamp, rbind) |> Map.ofList 
 

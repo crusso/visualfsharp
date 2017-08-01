@@ -5656,8 +5656,9 @@ and AllocValForBind cenv cgbuf (scopeMarks: Mark * Mark) eenv (TBind(v,repr,_)) 
 
 and AllocValsForBind cenv cgbuf (scopeMarks: Mark * Mark) eenv (TBind(v,repr,_)) =
     match repr with
-    | Expr.TyLambda(_,_,Expr.Lambda(_,_,_,_xs,_body,_,_),_,forallty) ->
-        let (_,xss,_e,_t) = stripTopLambda (repr,forallty) 
+    //|   Expr.Lambda(_,_,_,_xs,_body,_,ty)
+    |   Expr.TyLambda(_,_,Expr.Lambda(_,_,_,_xs,_body,_,_),_,ty) ->
+        let (_,xss,_e,_t) = stripTopLambda (repr,ty) 
         let xs = List.concat xss
         let eenv =  AddStorageForVal cenv.g (v,notlazy Null) eenv
         let reps, eenv =  List.mapFold (fun eenv x -> AllocLocalVal cenv cgbuf x eenv None scopeMarks) eenv xs
